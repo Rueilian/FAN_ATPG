@@ -1446,7 +1446,102 @@ bool AddScanChainsCmd::exec(const std::vector<std::string> &argv)
 		return false;
 	}
 
-	std::cout << "#  Add Scan Chains \n";
+	Circuit *cir = fanMgr_->cir;
+	int numPPI = cir->numPPI_;
+
+	std::cout << "#  Add Scan Chains\n";
+	std::cout << "#    Number of flip-flops: " << numPPI << "\n";
+
+	if (numPPI == 0)
+	{
+		std::cout << "#    No flip-flops found — combinational-only circuit\n";
+		return true;
+	}
+
+	// Collect FF names in circuit order (PPI slot i = gate at index numPI_+i)
+	std::vector<std::string> ffNames(numPPI);
+	for (int i = 0; i < numPPI; ++i)
+	{
+		int gIdx = cir->numPI_ + i;
+		ffNames[i] = cir->pNetlist_->getTop()->getCell(
+			(size_t)cir->circuitGates_[gIdx].cellId_)->name_;
+	}
+
+	// Print scan chain order (default: circuit order, SI → FF[0] → ... → FF[N-1] → SO)
+	std::cout << "#    Scan chain (SI →";
+	for (int i = 0; i < numPPI; ++i)
+		std::cout << " " << ffNames[i] << " →";
+	std::cout << " SO)\n";
+
+	if (!fanMgr_->pcoll || fanMgr_->pcoll->patternVector_.empty())
+	{
+		std::cout << "#    No test patterns available — skipping switching activity analysis\n";
+		return true;
+	}
+
+	// Simulate scan-shift sequence to compute switching activity.
+	// Chain layout: SI → FF[0] → FF[1] → ... → FF[N-1] → SO
+	// To load PPI[0..N-1] into FF[0..N-1] we shift N times:
+	//   shift k feeds PPI[N-1-k] into SI; each FF shifts its value to the next.
+	int numPat = (int)fanMgr_->pcoll->patternVector_.size();
+	std::vector<long long> ffToggles(numPPI, 0);
+	long long totalToggles = 0;
+	long long totalShiftCycles = 0;
+
+	// Current state of the scan chain; start with unknowns
+	std::vector<Value> chainState(numPPI, X);
+
+	for (int p = 0; p < numPat; ++p)
+	{
+		auto &pat = fanMgr_->pcoll->patternVector_[p];
+		if (pat.PPI_.empty())
+			continue;
+
+		// Shift in PPI[N-1] first, then PPI[N-2], ..., then PPI[0].
+		// After all N shifts: FF[i] = PPI[i].
+		for (int shift = numPPI - 1; shift >= 0; --shift)
+		{
+			Value newBit = pat.PPI_[shift];
+
+			// Shift chain right: FF[N-1] ← FF[N-2] ← ... ← FF[0] ← newBit
+			for (int i = numPPI - 1; i > 0; --i)
+			{
+				Value incoming = chainState[i - 1];
+				if (chainState[i] != X && incoming != X && chainState[i] != incoming)
+				{
+					++ffToggles[i];
+					++totalToggles;
+				}
+				chainState[i] = incoming;
+			}
+			if (chainState[0] != X && newBit != X && chainState[0] != newBit)
+			{
+				++ffToggles[0];
+				++totalToggles;
+			}
+			chainState[0] = newBit;
+			++totalShiftCycles;
+		}
+
+		// After functional application, the chain captures PPO values
+		if (!pat.PPO_.empty())
+			for (int i = 0; i < numPPI; ++i)
+				chainState[i] = pat.PPO_[i];
+	}
+
+	std::cout << "#    Test patterns:        " << numPat << "\n";
+	std::cout << "#    Total shift cycles:   " << totalShiftCycles << "\n";
+	std::cout << "#    Total toggles:        " << totalToggles << "\n";
+	if (numPPI > 0 && totalShiftCycles > 0)
+	{
+		double activity = (double)totalToggles / ((long long)numPPI * totalShiftCycles);
+		std::cout << "#    Switching activity:   " << std::fixed
+		          << std::setprecision(4) << activity << "\n";
+	}
+	std::cout << "#    Per-FF toggle count:\n";
+	for (int i = 0; i < numPPI; ++i)
+		std::cout << "#      [" << std::setw(3) << i << "] "
+		          << ffNames[i] << ": " << ffToggles[i] << "\n";
 
 	return true;
 }
