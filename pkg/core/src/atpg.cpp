@@ -4378,8 +4378,8 @@ void Atpg::calSCOAP()
 		}
 	}
 
-	// calculate co_ starting from PO and PP
-	for (int gateID = 0; gateID < pCircuit_->totalGate_; ++gateID)
+	// calculate co_ starting from PO and PPO (reverse topological order: PO→PI)
+	for (int gateID = pCircuit_->totalGate_ - 1; gateID >= 0; --gateID)
 	{
 		Gate &gate = pCircuit_->circuitGates_[gateID];
 		switch (gate.gateType_)
