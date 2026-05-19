@@ -1466,13 +1466,21 @@ bool AddScanChainsCmd::exec(const std::vector<std::string> &argv)
 		return true;
 	}
 
-	// Collect FF names in circuit order (PPI slot i = gate at index numPI_+i)
+	// Compute SCOAP controllability/observability for each gate
+	if (fanMgr_->atpg)
+		fanMgr_->atpg->calSCOAP();
+
+	// Collect FF names and SCOAP values (PPI slot i = gate at index numPI_+i)
 	std::vector<std::string> ffNames(numPPI);
+	std::vector<int> ffCC0(numPPI), ffCC1(numPPI), ffCO(numPPI);
 	for (int i = 0; i < numPPI; ++i)
 	{
 		int gIdx = cir->numPI_ + i;
 		ffNames[i] = cir->pNetlist_->getTop()->getCell(
 			(size_t)cir->circuitGates_[gIdx].cellId_)->name_;
+		ffCC0[i] = cir->circuitGates_[gIdx].cc0_;
+		ffCC1[i] = cir->circuitGates_[gIdx].cc1_;
+		ffCO[i]  = cir->circuitGates_[gIdx].co_;
 	}
 
 	// Export .sf file for ScanForge to consume
@@ -1488,6 +1496,11 @@ bool AddScanChainsCmd::exec(const std::vector<std::string> &argv)
 	sf << "FF_NAMES";
 	for (const auto &n : ffNames)
 		sf << " " << n;
+	sf << "\n";
+	// SCOAP: one line per FF — CC0 CC1 CO (higher = harder to test = more scan-worthy)
+	sf << "SCOAP";
+	for (int i = 0; i < numPPI; ++i)
+		sf << "  " << ffCC0[i] << " " << ffCC1[i] << " " << ffCO[i];
 	sf << "\n";
 
 	int numPat = 0;

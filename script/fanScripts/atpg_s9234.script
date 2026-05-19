@@ -11,5 +11,6 @@ set_X-Fill on
 run_atpg
 report_statistics > rpt/FAN_s9234.rpt
 write_pattern pat/FAN_s9234.pat
+add_scan_chains -o results/s9234.sf
 write_to_STIL pat/FAN_s9234.stil
 exit
