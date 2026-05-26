@@ -56,6 +56,29 @@ bool Circuit::buildCircuit(Netlist *const pNetlist, const int &numFrame,
 
 	// Create gates in the circuit.
 	createCircuitGates();
+
+	// Resolve non-scan FF names to PPI indices for PARTIAL_SEQUENTIAL mode.
+	if (!nonscanCellNames_.empty() && numFrame_ > 1) {
+		isPpiNonscan_.assign(numPPI_, false);
+		for (const std::string& name : nonscanCellNames_) {
+			IntfNs::Cell* c = pNetlist->getTop()->getCell(name.c_str());
+			if (!c) {
+				std::cerr << "**WARNING Circuit::buildCircuit(): non-scan FF `"
+				          << name << "' not found, skipping\n";
+				continue;
+			}
+			int gateIdx = cellIndexToGateIndex_[c->id_];
+			int ppiIdx = gateIdx - numPI_;
+			if (ppiIdx >= 0 && ppiIdx < numPPI_) {
+				isPpiNonscan_[ppiIdx] = true;
+			} else {
+				std::cerr << "**WARNING Circuit::buildCircuit(): cell `"
+				          << name << "' is not a FF (PPI), skipping\n";
+			}
+		}
+		timeFrameConnectType_ = PARTIAL_SEQUENTIAL;
+	}
+
 	connectMultipleTimeFrame(); // For multiple time frames.
 	assignMinLevelOfFanins();
 
@@ -732,6 +755,13 @@ void Circuit::createCircuitPPO()
 // **************************************************************************
 void Circuit::connectMultipleTimeFrame()
 {
+	// Snapshot of frame-0 gates used as the read-only template for all frames.
+	// The live circuitGates_[0..numGate_-1] entries get mutated (PPO→BUF type
+	// changes, fanout rewiring) while building frame 1; without a snapshot the
+	// mutations propagate into the template and corrupt frames 2, 3, …
+	const std::vector<Gate> f0(circuitGates_.begin(),
+	                           circuitGates_.begin() + numGate_);
+
 	for (int i = 1; i < numFrame_; ++i)
 	{
 		int offset = numGate_ * i;
@@ -744,39 +774,49 @@ void Circuit::connectMultipleTimeFrame()
 				circuitGates_[gateID].fanoutVector_.resize(circuitGates_[gateID].numFO_);
 			}
 		}
+		else if (timeFrameConnectType_ == PARTIAL_SEQUENTIAL)
+		{
+			for (int j = 0; j < numPPI_; ++j)
+			{ // Only set up fanout for non-scan FF PPOs.
+				if (!isPpiNonscan_[j]) continue;
+				int gateID = offset - numPPI_ + j;
+				circuitGates_[gateID].numFO_ = 1;
+				circuitGates_[gateID].fanoutVector_.resize(1);
+			}
+		}
 		for (int j = 0; j < numGate_; ++j)
-		{ // Read gate informations.
+		{ // Read gate informations — use f0 (frame-0 snapshot) as the template.
 			int gateID = offset + j;
 			circuitGates_[gateID].gateId_ = gateID;
-			circuitGates_[gateID].cellId_ = circuitGates_[j].cellId_;
-			circuitGates_[gateID].numLevel_ = circuitLvl_ * i + circuitGates_[j].numLevel_;
-			circuitGates_[gateID].gateType_ = circuitGates_[j].gateType_;
-			circuitGates_[gateID].frame_ = i; // Record gateId, cellId, numlevel, gatetype and frame.
-			if (circuitGates_[gateID].gateType_ != Gate::PPI && circuitGates_[gateID].gateType_ != Gate::PPO)
+			circuitGates_[gateID].cellId_ = f0[j].cellId_;
+			circuitGates_[gateID].numLevel_ = circuitLvl_ * i + f0[j].numLevel_;
+			circuitGates_[gateID].gateType_ = f0[j].gateType_;
+			circuitGates_[gateID].frame_ = i;
+			if (f0[j].gateType_ != Gate::PPI && f0[j].gateType_ != Gate::PPO)
 			{ // If not PPIs or PPOs.
 				// Add corresponding fanout.
-				circuitGates_[gateID].numFO_ = circuitGates_[j].numFO_;
-				circuitGates_[gateID].fanoutVector_.resize(circuitGates_[j].numFO_);
-				for (int k = 0; k < circuitGates_[j].numFO_; ++k)
+				circuitGates_[gateID].numFO_ = f0[j].numFO_;
+				circuitGates_[gateID].fanoutVector_.resize(f0[j].numFO_);
+				for (int k = 0; k < f0[j].numFO_; ++k)
 				{
-					circuitGates_[gateID].fanoutVector_[k] = circuitGates_[j].fanoutVector_[k] + offset;
+					circuitGates_[gateID].fanoutVector_[k] = f0[j].fanoutVector_[k] + offset;
 				}
 				// Add corresponding fanin.
-				circuitGates_[gateID].numFI_ = circuitGates_[j].numFI_;
-				circuitGates_[gateID].faninVector_.resize(circuitGates_[j].numFI_);
-				for (int k = 0; k < circuitGates_[j].numFI_; ++k)
+				circuitGates_[gateID].numFI_ = f0[j].numFI_;
+				circuitGates_[gateID].faninVector_.resize(f0[j].numFI_);
+				for (int k = 0; k < f0[j].numFI_; ++k)
 				{
-					circuitGates_[gateID].faninVector_[k] = circuitGates_[j].faninVector_[k] + offset;
+					circuitGates_[gateID].faninVector_[k] = f0[j].faninVector_[k] + offset;
 				}
 			}
-			else if (circuitGates_[gateID].gateType_ == Gate::PPI)
+			else if (f0[j].gateType_ == Gate::PPI)
 			{ // If PPIs.
 				// Add corresponding fanout.
-				circuitGates_[gateID].numFO_ = circuitGates_[j].numFO_;
-				circuitGates_[gateID].fanoutVector_.resize(circuitGates_[j].numFO_);
-				for (int k = 0; k < circuitGates_[j].numFO_; ++k)
+				circuitGates_[gateID].numFO_ = f0[j].numFO_;
+				circuitGates_[gateID].fanoutVector_.resize(f0[j].numFO_);
+				for (int k = 0; k < f0[j].numFO_; ++k)
 				{
-					circuitGates_[gateID].fanoutVector_[k] = circuitGates_[j].fanoutVector_[k] + offset;
+					circuitGates_[gateID].fanoutVector_[k] = f0[j].fanoutVector_[k] + offset;
 				}
 				// Add fanin for PPIs.
 				circuitGates_[gateID].numFI_ = 1;
@@ -786,6 +826,21 @@ void Circuit::connectMultipleTimeFrame()
 					circuitGates_[gateID].faninVector_[0] = gateID - numPI_ - numPPI_;
 					circuitGates_[gateID].gateType_ = Gate::BUF;
 					circuitGates_[gateID - numPI_ - numPPI_].fanoutVector_[0] = gateID;
+				}
+				else if (timeFrameConnectType_ == PARTIAL_SEQUENTIAL)
+				{ // Non-scan FFs carry state; scan FFs remain free.
+					int ppiIdx = j - numPI_;
+					if (isPpiNonscan_[ppiIdx])
+					{
+						circuitGates_[gateID].faninVector_[0] = gateID - numPI_ - numPPI_;
+						circuitGates_[gateID].gateType_ = Gate::BUF;
+						circuitGates_[gateID - numPI_ - numPPI_].fanoutVector_[0] = gateID;
+					}
+					else
+					{ // Scan FF: leave PPI free (no fanin).
+						circuitGates_[gateID].numFI_ = 0;
+						circuitGates_[gateID].faninVector_.clear();
+					}
 				}
 				else if (gateID != (offset + numPI_))
 				{ // Do SHIFT.
@@ -804,11 +859,11 @@ void Circuit::connectMultipleTimeFrame()
 			{ // If PPOs.
 				// Add corresponding fanin.
 				circuitGates_[gateID].numFO_ = 0;
-				circuitGates_[gateID].numFI_ = circuitGates_[j].numFI_;
+				circuitGates_[gateID].numFI_ = f0[j].numFI_;
 				circuitGates_[gateID].faninVector_.resize(circuitGates_[gateID].numFI_);
-				for (int k = 0; k < circuitGates_[j].numFI_; ++k)
+				for (int k = 0; k < f0[j].numFI_; ++k)
 				{
-					circuitGates_[gateID].faninVector_[k] = circuitGates_[j].faninVector_[k] + offset;
+					circuitGates_[gateID].faninVector_[k] = f0[j].faninVector_[k] + offset;
 				}
 			}
 		}
@@ -817,6 +872,15 @@ void Circuit::connectMultipleTimeFrame()
 		{
 			for (int j = 0; j < numPPI_; ++j)
 			{
+				int gateID = offset - numPPI_ + j;
+				circuitGates_[gateID].gateType_ = Gate::BUF;
+			}
+		}
+		else if (timeFrameConnectType_ == PARTIAL_SEQUENTIAL)
+		{
+			for (int j = 0; j < numPPI_; ++j)
+			{ // Only convert non-scan FF PPOs to BUF; scan FF PPOs remain active.
+				if (!isPpiNonscan_[j]) continue;
 				int gateID = offset - numPPI_ + j;
 				circuitGates_[gateID].gateType_ = Gate::BUF;
 			}

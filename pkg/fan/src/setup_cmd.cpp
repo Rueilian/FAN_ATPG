@@ -489,6 +489,10 @@ bool BuildCircuitCmd::exec(const std::vector<std::string> &argv)
 	}
 
 	fanMgr_->cir = new Circuit;
+	// Copy non-scan FF names so buildCircuit() activates PARTIAL_SEQUENTIAL mode.
+	if (!fanMgr_->nonscanFfNames.empty()) {
+		fanMgr_->cir->nonscanCellNames_ = fanMgr_->nonscanFfNames;
+	}
 	// build circuit
 	fanMgr_->tmusg.periodStart();
 	std::cout << "#  Building circuit ..."
@@ -765,6 +769,54 @@ bool SetXFillCmd::exec(const std::vector<std::string> &argv)
 		return false;
 	}
 
+	return true;
+}
+SetNonscanFfCmd::SetNonscanFfCmd(const std::string &name, FanMgr *fanMgr) : Cmd(name)
+{
+	fanMgr_ = fanMgr;
+	optMgr_.setName(name);
+	optMgr_.setShortDes("declare non-scan flip-flops");
+	optMgr_.setDes("declare one or more FF cell names as non-scan; must be called before build_circuit");
+	optMgr_.regArg(new Arg(Arg::OPT_INF, "FF cell name(s) to declare as non-scan", "FF"));
+	Opt *opt = new Opt(Opt::BOOL, "clear all previously declared non-scan FFs", "");
+	opt->addFlag("clear");
+	optMgr_.regOpt(opt);
+	opt = new Opt(Opt::BOOL, "print usage", "");
+	opt->addFlag("h");
+	opt->addFlag("help");
+	optMgr_.regOpt(opt);
+}
+
+SetNonscanFfCmd::~SetNonscanFfCmd() {}
+
+bool SetNonscanFfCmd::exec(const std::vector<std::string> &argv)
+{
+	optMgr_.parse(argv);
+
+	if (optMgr_.isFlagSet("h"))
+	{
+		optMgr_.usage();
+		return true;
+	}
+
+	if (optMgr_.isFlagSet("clear"))
+	{
+		fanMgr_->nonscanFfNames.clear();
+		std::cout << "#  Non-scan FF list cleared\n";
+		return true;
+	}
+
+	if (optMgr_.getNParsedArg() < 1)
+	{
+		std::cerr << "**ERROR SetNonscanFfCmd::exec(): at least one FF cell name required\n";
+		return false;
+	}
+
+	for (size_t i = 0; i < optMgr_.getNParsedArg(); ++i)
+	{
+		fanMgr_->nonscanFfNames.push_back(optMgr_.getParsedArg(i));
+	}
+	std::cout << "#  Non-scan FFs declared: " << fanMgr_->nonscanFfNames.size() << " total\n";
 	return true;
 }
 // Ne

@@ -18,10 +18,12 @@ namespace CoreNs
 	public:
 		// Specify how to connect multiple time frames of circuits.
 		// CAPTURE means Launch-on-capture; SHIFT means launch-on-shift.
+		// PARTIAL_SEQUENTIAL: non-scan FFs carry state across frames; scan FFs remain free.
 		enum TIME_FRAME_CONNECT_TYPE
 		{
 			CAPTURE = 0,
-			SHIFT
+			SHIFT,
+			PARTIAL_SEQUENTIAL
 		};
 
 		inline Circuit();
@@ -29,6 +31,11 @@ namespace CoreNs
 		// Build the circuit from the netlist.
 		bool buildCircuit(IntfNs::Netlist *const pNetlist, const int &numFrame = 1,
 		                  const TIME_FRAME_CONNECT_TYPE &timeFrameConnectType = CAPTURE);
+
+		// Non-scan FF cell names; set before buildCircuit() to enable PARTIAL_SEQUENTIAL mode.
+		std::vector<std::string> nonscanCellNames_;
+		// Per-PPI flag: true = non-scan FF (state carries across frames). Populated by buildCircuit().
+		std::vector<bool> isPpiNonscan_;
 
 		// Info for one time frame.
 		IntfNs::Netlist *pNetlist_; // Corresponding netlist.

@@ -1,0 +1,14 @@
+read_lib techlib/mod_nangate45.mdt
+read_netlist mod_netlist/s27.v
+report_netlist
+# Declare 2 of 3 FFs as non-scan; U_G7 remains scan (freely driven each frame)
+set_nonscan_ff U_G5 U_G6
+build_circuit --frame 4
+report_circuit
+set_fault_type saf
+add_fault --all
+set_static_compression on
+set_dynamic_compression on
+run_atpg
+report_statistics > rpt/FAN_s27_partial.rpt
+exit

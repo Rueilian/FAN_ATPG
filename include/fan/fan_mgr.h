@@ -8,6 +8,9 @@
 #ifndef _FAN_FAN_MGR_H_
 #define _FAN_FAN_MGR_H_
 
+#include <string>
+#include <vector>
+
 #include "common/tm_usage.h"
 
 #include "interface/netlist.h"
@@ -40,6 +43,8 @@ public:
     CoreNs::Atpg        *atpg;
     CommonNs::TmUsage   tmusg;
     CommonNs::TmStat    atpgStat;
+    // Cell names of FFs declared as non-scan (set by set_nonscan_ff before build_circuit).
+    std::vector<std::string> nonscanFfNames;
 };
 
 };

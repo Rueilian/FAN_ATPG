@@ -93,6 +93,17 @@ private:
     FanMgr *fanMgr_;
 };
 
+class SetNonscanFfCmd : public CommonNs::Cmd {
+public:
+         SetNonscanFfCmd(const std::string &name, FanMgr *fanMgr);
+         ~SetNonscanFfCmd();
+
+    bool exec(const std::vector<std::string> &argv);
+
+private:
+    FanMgr *fanMgr_;
+};
+
 //Ne
 class SetPatternTypeCmd : public CommonNs::Cmd {
 public:
