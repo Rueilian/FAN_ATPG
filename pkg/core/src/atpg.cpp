@@ -158,9 +158,17 @@ void Atpg::calculateGateDepthFromPO()
 		gateID_to_valModified_[gateID] = 0; // sneak the initialization assignment in here
 
 		gate.depthFromPo_ = INFINITE;
-		if ((gate.gateType_ == Gate::PO) || (gate.gateType_ == Gate::PPO))
+		if (gate.gateType_ == Gate::PO)
 		{
 			gate.depthFromPo_ = 0;
+		}
+		else if (gate.gateType_ == Gate::PPO)
+		{
+			const int ppoIndex = gateID - (pCircuit_->totalGate_ - pCircuit_->numPPI_);
+			if (pCircuit_->isObservablePpoIndex(ppoIndex))
+			{
+				gate.depthFromPo_ = 0;
+			}
 		}
 		else if (gate.numFO_ > 0)
 		{
@@ -200,7 +208,8 @@ void Atpg::identifyGateLineType()
 
 		gateID_to_lineType_[gateID] = FREE_LINE; // initialize to FREE_LINE
 
-		if (gate.gateType_ != Gate::PI && gate.gateType_ != Gate::PPI)
+		if (gate.gateType_ != Gate::PI && gate.gateType_ != Gate::PPI &&
+				gate.gateType_ != Gate::TIEX && gate.gateType_ != Gate::TIEZ)
 		{
 			for (const int &fanInGateID : gate.faninVector_)
 			{
@@ -1570,7 +1579,8 @@ bool Atpg::doImplication(IMPLICATION_STATUS atpgStatus, int startLevel)
 Atpg::IMPLICATION_STATUS Atpg::doOneGateBackwardImplication(Gate *pGate)
 {
 	IMPLICATION_STATUS implicationStatus = FORWARD;
-	if (pGate->gateType_ == Gate::PI || pGate->gateType_ == Gate::PPI)
+	if (pGate->gateType_ == Gate::PI || pGate->gateType_ == Gate::PPI ||
+			pGate->gateType_ == Gate::TIEX || pGate->gateType_ == Gate::TIEZ)
 	{
 		return FORWARD;
 	}
@@ -2064,6 +2074,14 @@ bool Atpg::checkIfFaultHasPropagatedToPO(bool &faultHasPropagatedToPO)
 	// i.e. The fault has propagated to the PO/PPO
 	for (int i = 0; i < pCircuit_->numPO_ + pCircuit_->numPPI_; ++i)
 	{
+		if (i < pCircuit_->numPPI_)
+		{
+			const int ppoIndex = pCircuit_->numPPI_ - 1 - i;
+			if (!pCircuit_->isObservablePpoIndex(ppoIndex))
+			{
+				continue;
+			}
+		}
 		const Value &v = pCircuit_->circuitGates_[pCircuit_->totalGate_ - i - 1].atpgVal_;
 		if (v == D || v == B)
 		{
@@ -2216,6 +2234,10 @@ void Atpg::findFinalObjective(BACKTRACE_STATUS &backtraceFlag, const bool &fault
 				// IS THE HEAD LINE UNSPECIFIED?
 				if (pGate->atpgVal_ == X)
 				{ // YES
+					if (pGate->gateType_ == Gate::TIEX || pGate->gateType_ == Gate::TIEZ)
+					{
+						continue;
+					}
 					// LET THE HEAD OBJECTIVE BE FINAL OBJECTIVE
 					finalObjectives_.push_back(pGate->gateId_);
 					// EXIT
@@ -2265,6 +2287,10 @@ void Atpg::assignAtpgValToFinalObjectiveGates()
 	while (!finalObjectives_.empty())
 	{ // while exist any finalObject
 		Gate *pGate = &pCircuit_->circuitGates_[vecPop(finalObjectives_)];
+		if (pGate->gateType_ == Gate::TIEX || pGate->gateType_ == Gate::TIEZ)
+		{
+			continue;
+		}
 
 		// judge the value by numOfZero and numOfOne
 		if (gateID_to_n0_[pGate->gateId_] > gateID_to_n1_[pGate->gateId_])
@@ -2340,7 +2366,9 @@ void Atpg::justifyFreeLines(Fault &originalFault)
 			pGate->atpgVal_ = L;
 		}
 
-		if (!(pGate->gateType_ == Gate::PI || pGate->gateType_ == Gate::PPI || pGate->atpgVal_ == X))
+		if (!(pGate->gateType_ == Gate::PI || pGate->gateType_ == Gate::PPI ||
+					pGate->gateType_ == Gate::TIEX || pGate->gateType_ == Gate::TIEZ ||
+					pGate->atpgVal_ == X))
 		{
 			fanoutFreeBacktrace(pGate);
 		}
@@ -2434,7 +2462,9 @@ void Atpg::restoreFault(Fault &originalFault)
 			pGate->atpgVal_ = L;
 		}
 
-		if (!(pGate->gateType_ == Gate::PI || pGate->gateType_ == Gate::PPI || pGate->atpgVal_ == X)) // if the gate's value not unknown and the gates type not PI or PPI
+		if (!(pGate->gateType_ == Gate::PI || pGate->gateType_ == Gate::PPI ||
+					pGate->gateType_ == Gate::TIEX || pGate->gateType_ == Gate::TIEZ ||
+					pGate->atpgVal_ == X)) // if the gate's value not unknown and the gate is not a controllable boundary
 		{
 			fanoutFreeBacktrace(pGate);
 		}
@@ -2587,10 +2617,19 @@ int Atpg::doUniquePathSensitization(Gate &gate)
 	{
 		std::vector<int> &UniquePathList = gateID_to_uniquePath_[pCurrGate->gateId_];
 
-		// If pCurrGate is PO or PPO, break.
-		if (pCurrGate->gateType_ == Gate::PO || pCurrGate->gateType_ == Gate::PPO)
+		// If pCurrGate reaches a valid observable endpoint, break.
+		if (pCurrGate->gateType_ == Gate::PO)
 		{
 			break;
+		}
+		if (pCurrGate->gateType_ == Gate::PPO)
+		{
+			const int ppoIndex = pCurrGate->gateId_ - (pCircuit_->totalGate_ - pCircuit_->numPPI_);
+			if (pCircuit_->isObservablePpoIndex(ppoIndex))
+			{
+				break;
+			}
+			return UNIQUE_PATH_SENSITIZE_FAIL;
 		}
 		else if (pCurrGate->numFO_ == 1) // If pCurrGate is fanout free, set pNextGate to its output gate.
 		{
@@ -2746,10 +2785,21 @@ bool Atpg::xPathTracing(Gate *pGate)
 		return true;
 	}
 
-	if (pGate->gateType_ == Gate::PO || pGate->gateType_ == Gate::PPO)
+	if (pGate->gateType_ == Gate::PO)
 	{
 		gateID_to_xPathStatus_[pGate->gateId_] = XPATH_EXIST;
 		return true;
+	}
+	if (pGate->gateType_ == Gate::PPO)
+	{
+		const int ppoIndex = pGate->gateId_ - (pCircuit_->totalGate_ - pCircuit_->numPPI_);
+		if (pCircuit_->isObservablePpoIndex(ppoIndex))
+		{
+			gateID_to_xPathStatus_[pGate->gateId_] = XPATH_EXIST;
+			return true;
+		}
+		gateID_to_xPathStatus_[pGate->gateId_] = NO_XPATH_EXIST;
+		return false;
 	}
 
 	for (int i = 0; i < pGate->numFO_; ++i)
@@ -3064,6 +3114,10 @@ Fault Atpg::setFreeLineFaultyGate(Gate &gate)
 // **************************************************************************
 void Atpg::fanoutFreeBacktrace(Gate *pGate)
 {
+	auto isUncontrollableSource = [](Gate *g) {
+		return g->gateType_ == Gate::TIEX || g->gateType_ == Gate::TIEZ;
+	};
+
 	currentObjectives_.clear();
 	currentObjectives_.reserve(MAX_LIST_SIZE);
 	currentObjectives_.push_back(pGate->gateId_);
@@ -3072,7 +3126,9 @@ void Atpg::fanoutFreeBacktrace(Gate *pGate)
 	{
 		Gate *pGate = &pCircuit_->circuitGates_[vecPop(currentObjectives_)];
 
-		if (pGate->gateType_ == Gate::PI || pGate->gateType_ == Gate::PPI || pGate == firstTimeFrameHeadLine_)
+		if (pGate->gateType_ == Gate::PI || pGate->gateType_ == Gate::PPI ||
+				pGate->gateType_ == Gate::TIEX || pGate->gateType_ == Gate::TIEZ ||
+				pGate == firstTimeFrameHeadLine_)
 		{
 			continue;
 		}
@@ -3081,39 +3137,53 @@ void Atpg::fanoutFreeBacktrace(Gate *pGate)
 
 		if (pGate->gateType_ == Gate::XOR2 || pGate->gateType_ == Gate::XNOR2)
 		{
-			if (&pCircuit_->circuitGates_[pGate->faninVector_[1]] != firstTimeFrameHeadLine_)
+			Gate *pFanin0 = &pCircuit_->circuitGates_[pGate->faninVector_[0]];
+			Gate *pFanin1 = &pCircuit_->circuitGates_[pGate->faninVector_[1]];
+			if (isUncontrollableSource(pFanin0) || isUncontrollableSource(pFanin1))
 			{
-				if (pCircuit_->circuitGates_[pGate->faninVector_[0]].atpgVal_ == X)
+				continue;
+			}
+			if (pFanin1 != firstTimeFrameHeadLine_)
+			{
+				if (pFanin0->atpgVal_ == X)
 				{
-					pCircuit_->circuitGates_[pGate->faninVector_[0]].atpgVal_ = L;
+					pFanin0->atpgVal_ = L;
 				}
-				pCircuit_->circuitGates_[pGate->faninVector_[1]].atpgVal_ = cXOR3(pGate->atpgVal_, pGate->isInverse(), pCircuit_->circuitGates_[pGate->faninVector_[0]].atpgVal_);
+				pFanin1->atpgVal_ = cXOR3(pGate->atpgVal_, pGate->isInverse(), pFanin0->atpgVal_);
 			}
 			else
 			{
-				pCircuit_->circuitGates_[pGate->faninVector_[0]].atpgVal_ = cXOR3(pGate->atpgVal_, pGate->isInverse(), pCircuit_->circuitGates_[pGate->faninVector_[1]].atpgVal_);
+				pFanin0->atpgVal_ = cXOR3(pGate->atpgVal_, pGate->isInverse(), pFanin1->atpgVal_);
 			}
 			currentObjectives_.push_back(pGate->faninVector_[0]);
 			currentObjectives_.push_back(pGate->faninVector_[1]); // push both input gates into currentObjectives_ list
 		}
 		else if (pGate->gateType_ == Gate::XOR3 || pGate->gateType_ == Gate::XNOR3) // debugged by wang
 		{
-			if (&pCircuit_->circuitGates_[pGate->faninVector_[1]] != firstTimeFrameHeadLine_)
+			Gate *pFanin0 = &pCircuit_->circuitGates_[pGate->faninVector_[0]];
+			Gate *pFanin1 = &pCircuit_->circuitGates_[pGate->faninVector_[1]];
+			Gate *pFanin2 = &pCircuit_->circuitGates_[pGate->faninVector_[2]];
+			if (isUncontrollableSource(pFanin0) || isUncontrollableSource(pFanin1) ||
+			    isUncontrollableSource(pFanin2))
 			{
-				if (pCircuit_->circuitGates_[pGate->faninVector_[0]].atpgVal_ == X)
+				continue;
+			}
+			if (pFanin1 != firstTimeFrameHeadLine_)
+			{
+				if (pFanin0->atpgVal_ == X)
 				{
-					pCircuit_->circuitGates_[pGate->faninVector_[0]].atpgVal_ = L;
+					pFanin0->atpgVal_ = L;
 				}
-				if (pCircuit_->circuitGates_[pGate->faninVector_[2]].atpgVal_ == X)
+				if (pFanin2->atpgVal_ == X)
 				{
-					pCircuit_->circuitGates_[pGate->faninVector_[2]].atpgVal_ = L;
+					pFanin2->atpgVal_ = L;
 				}
-				pCircuit_->circuitGates_[pGate->faninVector_[1]].atpgVal_ = cXOR3(cXOR2(pGate->atpgVal_, pGate->isInverse()), pCircuit_->circuitGates_[pGate->faninVector_[0]].atpgVal_, pCircuit_->circuitGates_[pGate->faninVector_[2]].atpgVal_);
+				pFanin1->atpgVal_ = cXOR3(cXOR2(pGate->atpgVal_, pGate->isInverse()), pFanin0->atpgVal_, pFanin2->atpgVal_);
 			}
 			else
 			{
-				pCircuit_->circuitGates_[pGate->faninVector_[0]].atpgVal_ = L;
-				pCircuit_->circuitGates_[pGate->faninVector_[2]].atpgVal_ = cXOR3(cXOR2(pGate->atpgVal_, pGate->isInverse()), pCircuit_->circuitGates_[pGate->faninVector_[0]].atpgVal_, pCircuit_->circuitGates_[pGate->faninVector_[1]].atpgVal_);
+				pFanin0->atpgVal_ = L;
+				pFanin2->atpgVal_ = cXOR3(cXOR2(pGate->atpgVal_, pGate->isInverse()), pFanin0->atpgVal_, pFanin1->atpgVal_);
 			}
 			currentObjectives_.push_back(pGate->faninVector_[0]);
 			currentObjectives_.push_back(pGate->faninVector_[1]);
@@ -3121,9 +3191,14 @@ void Atpg::fanoutFreeBacktrace(Gate *pGate)
 		}
 		else if (pGate->isUnary())
 		{ // if pGate only have one input gate
-			if (&pCircuit_->circuitGates_[pGate->faninVector_[0]] != firstTimeFrameHeadLine_)
+			Gate *pFanin = &pCircuit_->circuitGates_[pGate->faninVector_[0]];
+			if (isUncontrollableSource(pFanin))
 			{
-				pCircuit_->circuitGates_[pGate->faninVector_[0]].atpgVal_ = cXOR2(pGate->atpgVal_, vInv);
+				continue;
+			}
+			if (pFanin != firstTimeFrameHeadLine_)
+			{
+				pFanin->atpgVal_ = cXOR2(pGate->atpgVal_, vInv);
 			}
 			currentObjectives_.push_back(pGate->faninVector_[0]); // add input gate into currentObjectives_ list
 		}
@@ -3133,6 +3208,10 @@ void Atpg::fanoutFreeBacktrace(Gate *pGate)
 			if (Val == pGate->getInputCtrlValue())
 			{
 				Gate *pMinLevelGate = &pCircuit_->circuitGates_[pGate->minLevelOfFanins_];
+				if (isUncontrollableSource(pMinLevelGate))
+				{
+					continue;
+				}
 				if (pMinLevelGate != firstTimeFrameHeadLine_)
 				{
 					pMinLevelGate->atpgVal_ = Val;
@@ -3149,6 +3228,10 @@ void Atpg::fanoutFreeBacktrace(Gate *pGate)
 							break;
 						}
 					}
+					if (isUncontrollableSource(pFaninGate))
+					{
+						continue;
+					}
 					pFaninGate->atpgVal_ = Val;
 					currentObjectives_.push_back(pFaninGate->gateId_);
 				}
@@ -3159,6 +3242,10 @@ void Atpg::fanoutFreeBacktrace(Gate *pGate)
 				for (int i = 0; i < pGate->numFI_; ++i)
 				{
 					pFaninGate = &pCircuit_->circuitGates_[pGate->faninVector_[i]];
+					if (isUncontrollableSource(pFaninGate))
+					{
+						continue;
+					}
 					if (pFaninGate->atpgVal_ == X)
 					{
 						pFaninGate->atpgVal_ = Val;
@@ -3305,12 +3392,17 @@ Atpg::BACKTRACE_RESULT Atpg::multipleBacktrace(BACKTRACE_STATUS atpgStatus, int 
 								}
 							}
 
-							if (nn0 > 0 || nn1 > 0)
+						if (nn0 > 0 || nn1 > 0)
+						{
+							if (pFaninGate->gateType_ == Gate::TIEX || pFaninGate->gateType_ == Gate::TIEZ)
 							{
-								// first find this fanout point,  add to
-								// Fanout-Point Objectives set
-								if (gateID_to_n0_[pFaninGate->gateId_] == 0 && gateID_to_n1_[pFaninGate->gateId_] == 0)
-								{
+								possibleFinalObjectiveID = pCurrentObj->gateId_;
+								return CONTRADICTORY;
+							}
+							// first find this fanout point,  add to
+							// Fanout-Point Objectives set
+							if (gateID_to_n0_[pFaninGate->gateId_] == 0 && gateID_to_n1_[pFaninGate->gateId_] == 0)
+							{
 									fanoutObjectives_.push_back(pFaninGate->gateId_);
 								}
 
@@ -3358,6 +3450,11 @@ Atpg::BACKTRACE_RESULT Atpg::multipleBacktrace(BACKTRACE_STATUS atpgStatus, int 
 
 							if (nn0 > 0 || nn1 > 0)
 							{
+								if (pFaninGate->gateType_ == Gate::TIEX || pFaninGate->gateType_ == Gate::TIEZ)
+								{
+									possibleFinalObjectiveID = pCurrentObj->gateId_;
+									return CONTRADICTORY;
+								}
 								// add gate into Current Objective set
 								// BY THE RULES(1)-(5) DETERMINE NEXT OBJECTIVES
 								// AND ADD THEM TO THE SET OF CURRENT OBJECTIVES
@@ -4231,6 +4328,13 @@ void Atpg::calSCOAP()
 				gate.cc0_ = 1;
 				gate.cc1_ = 1;
 				break;
+			case Gate::TIEX:
+			case Gate::TIEZ:
+				// Unknown uncontrollable sources should be extremely hard to justify
+				// to either logic value in the no-recovery model.
+				gate.cc0_ = INFINITE / 4;
+				gate.cc1_ = INFINITE / 4;
+				break;
 			case Gate::PO:
 			case Gate::PPO:
 			case Gate::BUF:
@@ -4385,12 +4489,19 @@ void Atpg::calSCOAP()
 		switch (gate.gateType_)
 		{
 			case Gate::PO:
-			case Gate::PPO:
 				gate.co_ = 0;
 				break;
+			case Gate::PPO:
+			{
+				const int ppoIndex = gateID - (pCircuit_->totalGate_ - pCircuit_->numPPI_);
+				gate.co_ = pCircuit_->isObservablePpoIndex(ppoIndex) ? 0 : INFINITE / 4;
+				break;
+			}
 			case Gate::PPI:
 			case Gate::PI:
 			case Gate::BUF:
+			case Gate::TIEX:
+			case Gate::TIEZ:
 				for (int j = 0; j < gate.numFO_; ++j)
 				{
 					if (j == 0 || pCircuit_->circuitGates_[gate.fanoutVector_[j]].co_ < gate.co_)

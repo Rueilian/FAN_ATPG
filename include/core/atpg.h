@@ -257,6 +257,18 @@ namespace CoreNs
 		{
 			return gate.atpgVal_;
 		}
+		if (gate.gateType_ == Gate::TIEX || gate.gateType_ == Gate::TIEZ)
+		{
+			return X;
+		}
+		if (gate.gateType_ == Gate::TIE0)
+		{
+			return L;
+		}
+		if (gate.gateType_ == Gate::TIE1)
+		{
+			return H;
+		}
 
 		static Value v[4];
 		int index = 0;
@@ -332,6 +344,13 @@ namespace CoreNs
 			case Gate::PI:
 			case Gate::PPI:
 				return gate.atpgVal_;
+			case Gate::TIEX:
+			case Gate::TIEZ:
+				return X;
+			case Gate::TIE0:
+				return L;
+			case Gate::TIE1:
+				return H;
 			case Gate::PO:
 			case Gate::PPO:
 			case Gate::BUF:
@@ -742,7 +761,14 @@ namespace CoreNs
 		}
 		for (int i = 0; i < pCircuit_->numPPI_; ++i)
 		{
-			pattern.PPI_[i] = pCircuit_->circuitGates_[pCircuit_->numPI_ + i].atpgVal_;
+			if (!pCircuit_->isPpiNonscan_.empty() && pCircuit_->isPpiNonscan_[i])
+			{
+				pattern.PPI_[i] = X;
+			}
+			else
+			{
+				pattern.PPI_[i] = pCircuit_->circuitGates_[pCircuit_->numPI_ + i].atpgVal_;
+			}
 		}
 		// if (pattern.SI_ != NULL && pCircuit_->numFrame_ > 1)
 		if (!(pattern.SI_.empty()) && pCircuit_->numFrame_ > 1)
@@ -1012,6 +1038,10 @@ namespace CoreNs
 		}
 		for (int i = 0; i < pCircuit_->numPPI_; ++i)
 		{
+			if (!pCircuit_->isPpiNonscan_.empty() && pCircuit_->isPpiNonscan_[i])
+			{
+				continue;
+			}
 			if (pattern.PPI_[i] == X)
 			{
 				pattern.PPI_[i] = rand() % 2;
@@ -1050,12 +1080,17 @@ namespace CoreNs
 			}
 		}
 
-		if (pattern.PPI_[0] == X)
+		if (!(pCircuit_->isPpiNonscan_.empty() && pCircuit_->isPpiNonscan_[0]) &&
+		    pattern.PPI_[0] == X)
 		{
 			pattern.PPI_[0] = pattern.PI1_[pCircuit_->numPI_ - 1];
 		}
 		for (int i = 1; i < pCircuit_->numPPI_; ++i)
 		{
+			if (!pCircuit_->isPpiNonscan_.empty() && pCircuit_->isPpiNonscan_[i])
+			{
+				continue;
+			}
 			if (pattern.PPI_[i] == X)
 			{
 				pattern.PPI_[i] = pattern.PPI_[i - 1];

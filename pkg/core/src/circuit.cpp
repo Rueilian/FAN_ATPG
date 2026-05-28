@@ -58,7 +58,9 @@ bool Circuit::buildCircuit(Netlist *const pNetlist, const int &numFrame,
 	createCircuitGates();
 
 	// Resolve non-scan FF names to PPI indices for PARTIAL_SEQUENTIAL mode.
-	if (!nonscanCellNames_.empty() && numFrame_ > 1) {
+	// Even for numFrame_ == 1 we still need the flags so a no-recovery partial-scan
+	// run can treat non-scan FF state as uncontrolled instead of freely assignable.
+	if (!nonscanCellNames_.empty()) {
 		isPpiNonscan_.assign(numPPI_, false);
 		for (const std::string& name : nonscanCellNames_) {
 			IntfNs::Cell* c = pNetlist->getTop()->getCell(name.c_str());
@@ -301,7 +303,11 @@ void Circuit::createCircuitPPI()
 		circuitGates_[ppiGateID].cellId_ = i;
 		circuitGates_[ppiGateID].primitiveId_ = 0;
 		circuitGates_[ppiGateID].numLevel_ = 0;
-		circuitGates_[ppiGateID].gateType_ = Gate::PPI;
+		circuitGates_[ppiGateID].gateType_ =
+			(timeFrameConnectType_ == PARTIAL_SEQUENTIAL && numFrame_ == 1 &&
+			 !isPpiNonscan_.empty() && isPpiNonscan_[i])
+				? Gate::TIEX
+				: Gate::PPI;
 
 		int qPortID = 0;
 		int fanoutSize = 0; // Calculate size of fanoutVector_ of circuitGates_[ppiGateID].

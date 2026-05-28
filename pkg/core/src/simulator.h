@@ -269,6 +269,11 @@ namespace CoreNs
 				pCircuit_->circuitGates_[gateID].goodSimLow_ = PARA_H;
 				pCircuit_->circuitGates_[gateID].goodSimHigh_ = PARA_L;
 				break;
+			case Gate::TIEX:
+			case Gate::TIEZ:
+				pCircuit_->circuitGates_[gateID].goodSimLow_ = PARA_L;
+				pCircuit_->circuitGates_[gateID].goodSimHigh_ = PARA_L;
+				break;
 			case Gate::PPI:
 				if (pCircuit_->timeFrameConnectType_ == Circuit::CAPTURE && pCircuit_->circuitGates_[gateID].frame_ > 0)
 				{
@@ -407,6 +412,11 @@ namespace CoreNs
 				pCircuit_->circuitGates_[gateID].faultSimLow_ = PARA_H;
 				pCircuit_->circuitGates_[gateID].faultSimHigh_ = PARA_L;
 				break;
+			case Gate::TIEX:
+			case Gate::TIEZ:
+				pCircuit_->circuitGates_[gateID].faultSimLow_ = PARA_L;
+				pCircuit_->circuitGates_[gateID].faultSimHigh_ = PARA_L;
+				break;
 			case Gate::PPI:
 				if (pCircuit_->timeFrameConnectType_ == Circuit::CAPTURE && pCircuit_->circuitGates_[gateID].frame_ > 0)
 				{
@@ -475,7 +485,9 @@ namespace CoreNs
 		{
 			pCircuit_->circuitGates_[j].goodSimLow_ = PARA_L;
 			pCircuit_->circuitGates_[j].goodSimHigh_ = PARA_L;
-			if (!pattern.PPI_.empty())
+			if (!pattern.PPI_.empty() &&
+			    (pCircuit_->isPpiNonscan_.empty() ||
+			     !pCircuit_->isPpiNonscan_[j - pCircuit_->numPI_]))
 			{
 				if (pattern.PPI_[j - pCircuit_->numPI_] == L)
 				{

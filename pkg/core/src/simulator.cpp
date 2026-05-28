@@ -401,6 +401,15 @@ void Simulator::parallelFaultCheckDetectionDropFaults(FaultPtrList &remainingFau
 	int start = pCircuit_->totalGate_ - pCircuit_->numPO_ - pCircuit_->numPPI_;
 	for (int i = start; i < pCircuit_->totalGate_; ++i)
 	{
+		const int outputIndex = i - start;
+		if (outputIndex >= pCircuit_->numPO_)
+		{
+			const int ppoIndex = outputIndex - pCircuit_->numPO_;
+			if (!pCircuit_->isObservablePpoIndex(ppoIndex))
+			{
+				continue;
+			}
+		}
 		detected |= ((pCircuit_->circuitGates_[i].goodSimLow_ & pCircuit_->circuitGates_[i].faultSimHigh_) | (pCircuit_->circuitGates_[i].goodSimHigh_ & pCircuit_->circuitGates_[i].faultSimLow_));
 	}
 
@@ -557,6 +566,15 @@ void Simulator::parallelPatternCheckDetection(Fault *const pfault)
 	int start = pCircuit_->totalGate_ - pCircuit_->numPO_ - pCircuit_->numPPI_;
 	for (int i = start; i < pCircuit_->totalGate_; ++i)
 	{
+		const int outputIndex = i - start;
+		if (outputIndex >= pCircuit_->numPO_)
+		{
+			const int ppoIndex = outputIndex - pCircuit_->numPO_;
+			if (!pCircuit_->isObservablePpoIndex(ppoIndex))
+			{
+				continue;
+			}
+		}
 		// TO-DO homework 02
 		detected |= ((pCircuit_->circuitGates_[i].goodSimLow_ & pCircuit_->circuitGates_[i].faultSimHigh_) | (pCircuit_->circuitGates_[i].goodSimHigh_ & pCircuit_->circuitGates_[i].faultSimLow_));
 		// End of TO-DO
@@ -648,6 +666,10 @@ void Simulator::parallelPatternSetPattern(PatternProcessor *pPatternProcessor, c
 		{
 			for (int k = 0; k < pPatternProcessor->numPPI_; ++k)
 			{
+				if (!pCircuit_->isPpiNonscan_.empty() && pCircuit_->isPpiNonscan_[k])
+				{
+					continue;
+				}
 				int index = k + pCircuit_->numPI_;
 				if (pPatternProcessor->patternVector_[j].PPI_[k] == L)
 				{
