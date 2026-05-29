@@ -446,35 +446,49 @@ namespace CoreNs
 	// **************************************************************************
 	inline void Simulator::assignPatternToCircuitInputs(const Pattern &pattern)
 	{
-		// Set pattern : Apply the pattern to PIs.
-		for (int j = 0; j < pCircuit_->numPI_; ++j)
+		for (int frame = 0; frame < pCircuit_->numFrame_; ++frame)
 		{
-			pCircuit_->circuitGates_[j].goodSimLow_ = PARA_L;
-			pCircuit_->circuitGates_[j].goodSimHigh_ = PARA_L;
-			if (!pattern.PI1_.empty())
+			for (int j = 0; j < pCircuit_->numPI_; ++j)
 			{
-				if (pattern.PI1_[j] == L)
+				const int gateIndex = j + frame * pCircuit_->numGate_;
+				pCircuit_->circuitGates_[gateIndex].goodSimLow_ = PARA_L;
+				pCircuit_->circuitGates_[gateIndex].goodSimHigh_ = PARA_L;
+
+				if (!pattern.PIFrames_.empty() &&
+				    frame < (int)pattern.PIFrames_.size() &&
+				    !pattern.PIFrames_[frame].empty())
 				{
-					pCircuit_->circuitGates_[j].goodSimLow_ = PARA_H;
+					if (pattern.PIFrames_[frame][j] == L)
+					{
+						pCircuit_->circuitGates_[gateIndex].goodSimLow_ = PARA_H;
+					}
+					else if (pattern.PIFrames_[frame][j] == H)
+					{
+						pCircuit_->circuitGates_[gateIndex].goodSimHigh_ = PARA_H;
+					}
+					continue;
 				}
-				else if (pattern.PI1_[j] == H)
+
+				if (frame == 0 && !pattern.PI1_.empty())
 				{
-					pCircuit_->circuitGates_[j].goodSimHigh_ = PARA_H;
+					if (pattern.PI1_[j] == L)
+					{
+						pCircuit_->circuitGates_[gateIndex].goodSimLow_ = PARA_H;
+					}
+					else if (pattern.PI1_[j] == H)
+					{
+						pCircuit_->circuitGates_[gateIndex].goodSimHigh_ = PARA_H;
+					}
 				}
-			}
-			if (pCircuit_->numFrame_ > 1)
-			{
-				pCircuit_->circuitGates_[j + pCircuit_->numGate_].goodSimLow_ = PARA_L;
-				pCircuit_->circuitGates_[j + pCircuit_->numGate_].goodSimHigh_ = PARA_L;
-				if (!pattern.PI2_.empty())
+				else if (frame == 1 && !pattern.PI2_.empty())
 				{
 					if (pattern.PI2_[j] == L)
 					{
-						pCircuit_->circuitGates_[j + pCircuit_->numGate_].goodSimLow_ = PARA_H;
+						pCircuit_->circuitGates_[gateIndex].goodSimLow_ = PARA_H;
 					}
 					else if (pattern.PI2_[j] == H)
 					{
-						pCircuit_->circuitGates_[j + pCircuit_->numGate_].goodSimHigh_ = PARA_H;
+						pCircuit_->circuitGates_[gateIndex].goodSimHigh_ = PARA_H;
 					}
 				}
 			}

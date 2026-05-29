@@ -21,6 +21,7 @@ namespace CoreNs
 	public:
 		inline Pattern() {}
 		inline Pattern(Circuit *pCircuit);
+		std::vector<std::vector<Value>> PIFrames_;
 		std::vector<Value> PI1_;
 		std::vector<Value> PI2_;
 		std::vector<Value> PPI_;
@@ -31,7 +32,8 @@ namespace CoreNs
 		inline void initForTransitionDelayFault(Circuit *pCircuit);
 	};
 	inline Pattern::Pattern(Circuit *pCircuit)
-			: PI1_(pCircuit->numPI_),
+			: PIFrames_(pCircuit->numFrame_, std::vector<Value>(pCircuit->numPI_)),
+				PI1_(pCircuit->numPI_),
 				PPI_(pCircuit->numPPI_),
 				PO1_(pCircuit->numPO_),
 				PPO_(pCircuit->numPPI_){};
@@ -50,6 +52,11 @@ namespace CoreNs
 	// **************************************************************************
 	inline void Pattern::initForTransitionDelayFault(Circuit *pCircuit)
 	{
+		PIFrames_.resize(pCircuit->numFrame_);
+		for (std::vector<Value> &frame : PIFrames_)
+		{
+			frame.resize(pCircuit->numPI_);
+		}
 		PI2_.resize(pCircuit->numPI_);
 		PO2_.resize(pCircuit->numPO_);
 		SI_.resize(1);

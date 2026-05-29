@@ -10,6 +10,32 @@
 
 using namespace CoreNs;
 
+namespace
+{
+inline bool isUncontrollableSource(const Gate *gate)
+{
+	return gate->gateType_ == Gate::TIEX || gate->gateType_ == Gate::TIEZ;
+}
+
+inline bool isStuckAtFault(const Fault &fault)
+{
+	return fault.faultType_ == Fault::SA0 || fault.faultType_ == Fault::SA1;
+}
+
+inline Fault mapSafToObservationFrame(const Circuit *pCircuit, const Fault &fault)
+{
+	if (!isStuckAtFault(fault) || pCircuit->numFrame_ <= 1)
+	{
+		return fault;
+	}
+	return Fault(fault.gateID_ + (pCircuit->numFrame_ - 1) * pCircuit->numGate_,
+							 fault.faultType_,
+							 fault.faultyLine_,
+							 fault.equivalent_,
+							 fault.faultState_);
+}
+}
+
 // **************************************************************************
 // Function   [ Atpg::generatePatternSet ]
 // Commenter  [ CAL WWS ]
@@ -303,6 +329,10 @@ void Atpg::identifyGateLineType()
 // **************************************************************************
 void Atpg::identifyGateDominator()
 {
+	auto reachesObservableOutput = [this](const Gate &g) {
+		return g.depthFromPo_ < INFINITE;
+	};
+
 	for (int i = pCircuit_->totalGate_ - 1; i >= 0; --i)
 	{
 		Gate &gate = pCircuit_->circuitGates_[i];
@@ -331,6 +361,10 @@ void Atpg::identifyGateDominator()
 
 				if (gateCount == 0)
 				{
+					if (!reachesObservableOutput(gDom))
+					{
+						break;
+					}
 					if ((int)gateID_to_uniquePath_.capacity() < pCircuit_->totalLvl_)
 					{
 						gateID_to_uniquePath_.reserve(pCircuit_->totalLvl_);
@@ -347,7 +381,10 @@ void Atpg::identifyGateDominator()
 				// not empty but gateCount is zero, we will continue.
 				if (gDom.numFO_ == 0)
 				{
-					gateCount = 0;
+					if (reachesObservableOutput(gDom))
+					{
+						gateCount = 0;
+					}
 				}
 				else if (gDom.numFO_ > 1)
 				{
@@ -593,7 +630,8 @@ void Atpg::TransitionDelayFaultATPG(FaultPtrList &faultPtrListForGen, PatternPro
 // **************************************************************************
 void Atpg::StuckAtFaultATPG(FaultPtrList &faultPtrListForGen, PatternProcessor *pPatternProcessor, int &numOfAtpgUntestableFaults)
 {
-	SINGLE_PATTERN_GENERATION_STATUS result = generateSinglePatternOnTargetFault(*faultPtrListForGen.front(), false);
+	const Fault mappedTargetFault = mapSafToObservationFrame(pCircuit_, *faultPtrListForGen.front());
+	SINGLE_PATTERN_GENERATION_STATUS result = generateSinglePatternOnTargetFault(mappedTargetFault, false);
 	if (result == PATTERN_FOUND)
 	{
 		Pattern pattern(pCircuit_);
@@ -642,7 +680,7 @@ void Atpg::StuckAtFaultATPG(FaultPtrList &faultPtrListForGen, PatternProcessor *
 				if (xPathExists(pGateForActivation))
 				{
 					// TO-DO homework 05 implement DTC here end of TO-DO
-					if (generateSinglePatternOnTargetFault(*pFault, true) == PATTERN_FOUND)
+					if (generateSinglePatternOnTargetFault(mapSafToObservationFrame(pCircuit_, *pFault), true) == PATTERN_FOUND)
 					{
 						resetPrevAtpgValStored();
 						clearAllFaultEffectByEvaluation();
@@ -720,12 +758,13 @@ void Atpg::StuckAtFaultATPG(FaultPtrList &faultPtrListForGen, PatternProcessor *
 // **************************************************************************
 Gate *Atpg::getGateForFaultActivation(const Fault &faultToActivate)
 {
+	const Fault mappedFault = mapSafToObservationFrame(pCircuit_, faultToActivate);
 	bool isOutputFault = (faultToActivate.faultyLine_ == 0);
 	Gate *pGateForActivation = NULL;
-	Gate *pFaultyGate = &pCircuit_->circuitGates_[faultToActivate.gateID_];
+	Gate *pFaultyGate = &pCircuit_->circuitGates_[mappedFault.gateID_];
 	if (!isOutputFault)
 	{
-		pGateForActivation = &pCircuit_->circuitGates_[pFaultyGate->faninVector_[faultToActivate.faultyLine_ - 1]];
+		pGateForActivation = &pCircuit_->circuitGates_[pFaultyGate->faninVector_[mappedFault.faultyLine_ - 1]];
 	}
 	else
 	{
@@ -995,7 +1034,6 @@ void Atpg::clearFaultEffectOnGateAtpgVal(Gate &gate)
 // **************************************************************************
 Atpg::SINGLE_PATTERN_GENERATION_STATUS Atpg::generateSinglePatternOnTargetFault(Fault targetFault, bool isAtStageDTC)
 {
-
 	int backwardImplicationLevel = 0;							// backward imply level
 	int numOfBacktrack = 0;										// backtrack times
 	bool Finish = false;										// Finish is true when whole pattern generation process is done
@@ -1069,7 +1107,22 @@ Atpg::SINGLE_PATTERN_GENERATION_STATUS Atpg::generateSinglePatternOnTargetFault(
 			if (checkForUnjustifiedBoundLines())
 			{
 				// DETERMINE A FINAL OBJECTIVE TO ASSIGN A VALUE
-				findFinalObjective(backtraceFlag, faultHasPropagatedToPO, pLastDFrontier);
+				if (!findFinalObjective(backtraceFlag, faultHasPropagatedToPO, pLastDFrontier))
+				{
+					clearAllEvents();
+					if (backtrack(backwardImplicationLevel))
+					{
+						backtraceFlag = INITIAL;
+						implicationStatus = (backwardImplicationLevel > 0) ? BACKWARD : FORWARD;
+						pLastDFrontier = NULL;
+					}
+					else
+					{
+						genStatus = FAULT_UNTESTABLE;
+						Finish = true;
+					}
+					continue;
+				}
 				// ASSIGN A VALUE TO THE FINAL OBJECTIVE LINE
 				assignAtpgValToFinalObjectiveGates();
 				implicationStatus = FORWARD;
@@ -1135,8 +1188,21 @@ Atpg::SINGLE_PATTERN_GENERATION_STATUS Atpg::generateSinglePatternOnTargetFault(
 				// Unique Sensitization fail
 				if (backwardImplicationLevel == UNIQUE_PATH_SENSITIZE_FAIL)
 				{
-					// If UNIQUE_PATH_SENSITIZE_FAIL, the number of gates in d-frontier in the next while loop
-					// and will backtrack
+					// Treat unique-path failure as a local dead end. In the TIEX
+					// case the d-frontier may remain structurally present, so a
+					// blind continue can spin on the same impossible path forever.
+					clearAllEvents();
+					if (backtrack(backwardImplicationLevel))
+					{
+						backtraceFlag = INITIAL;
+						implicationStatus = (backwardImplicationLevel > 0) ? BACKWARD : FORWARD;
+						pLastDFrontier = NULL;
+					}
+							else
+							{
+								genStatus = FAULT_UNTESTABLE;
+								Finish = true;
+							}
 					continue;
 				}
 				// Unique Sensitization success
@@ -1147,12 +1213,60 @@ Atpg::SINGLE_PATTERN_GENERATION_STATUS Atpg::generateSinglePatternOnTargetFault(
 				}
 				else if (backwardImplicationLevel == 0)
 				{
+					if (!hasPendingEvents())
+					{
+						backwardImplicationLevel = NO_UNIQUE_PATH;
+					}
+					else
+					{
+						implicationStatus = FORWARD;
+						continue;
+					}
+				}
+
+				if (backwardImplicationLevel == NO_UNIQUE_PATH)
+				{
+					// No event was created by unique sensitization. Fall back to
+					// objective selection instead of spinning on the same d-frontier.
+					if (!findFinalObjective(backtraceFlag, faultHasPropagatedToPO, pLastDFrontier))
+					{
+						clearAllEvents();
+						if (backtrack(backwardImplicationLevel))
+						{
+							backtraceFlag = INITIAL;
+							implicationStatus = (backwardImplicationLevel > 0) ? BACKWARD : FORWARD;
+							pLastDFrontier = NULL;
+						}
+							else
+							{
+								genStatus = FAULT_UNTESTABLE;
+								Finish = true;
+							}
+						continue;
+					}
+					assignAtpgValToFinalObjectiveGates();
+					implicationStatus = FORWARD;
 					continue;
 				}
 				else
 				{
 					// backwardImplicationLevel < 0, find an objective and set backtraceFlag and pLastDFrontier
-					findFinalObjective(backtraceFlag, faultHasPropagatedToPO, pLastDFrontier);
+					if (!findFinalObjective(backtraceFlag, faultHasPropagatedToPO, pLastDFrontier))
+					{
+						clearAllEvents();
+						if (backtrack(backwardImplicationLevel))
+						{
+							backtraceFlag = INITIAL;
+							implicationStatus = (backwardImplicationLevel > 0) ? BACKWARD : FORWARD;
+							pLastDFrontier = NULL;
+						}
+						else
+						{
+							genStatus = FAULT_UNTESTABLE;
+							Finish = true;
+						}
+						continue;
+					}
 					assignAtpgValToFinalObjectiveGates();
 					implicationStatus = FORWARD;
 					continue;
@@ -1161,7 +1275,22 @@ Atpg::SINGLE_PATTERN_GENERATION_STATUS Atpg::generateSinglePatternOnTargetFault(
 			else
 			{ // more than one
 				// DETERMINE A FINAL OBJECTIVE TO ASSIGN A VALUE
-				findFinalObjective(backtraceFlag, faultHasPropagatedToPO, pLastDFrontier);
+				if (!findFinalObjective(backtraceFlag, faultHasPropagatedToPO, pLastDFrontier))
+				{
+					clearAllEvents();
+					if (backtrack(backwardImplicationLevel))
+					{
+						backtraceFlag = INITIAL;
+						implicationStatus = (backwardImplicationLevel > 0) ? BACKWARD : FORWARD;
+						pLastDFrontier = NULL;
+					}
+						else
+						{
+							genStatus = FAULT_UNTESTABLE;
+							Finish = true;
+						}
+					continue;
+				}
 				// ASSIGN A VALUE TO THE FINAL OBJECTIVE LINE
 				assignAtpgValToFinalObjectiveGates();
 				implicationStatus = FORWARD;
@@ -1588,6 +1717,10 @@ Atpg::IMPLICATION_STATUS Atpg::doOneGateBackwardImplication(Gate *pGate)
 	if (pGate->gateType_ == Gate::BUF || pGate->gateType_ == Gate::INV || pGate->gateType_ == Gate::PO || pGate->gateType_ == Gate::PPO)
 	{
 		Gate *pImpGate = &pCircuit_->circuitGates_[pGate->faninVector_[0]];
+		if (isUncontrollableSource(pImpGate))
+		{
+			return CONFLICT;
+		}
 		gateID_to_valModified_[pGate->gateId_] = 1;
 
 		Value isINV = pGate->gateType_ == Gate::INV ? H : L;
@@ -1704,7 +1837,6 @@ Atpg::IMPLICATION_STATUS Atpg::doOneGateBackwardImplication(Gate *pGate)
 
 		if (pGate->atpgVal_ == OutputControlVal)
 		{
-			gateID_to_valModified_[pGate->gateId_] = 1;
 			Value InputNonControlVal = pGate->getInputNonCtrlValue();
 
 			for (int i = 0; i < pGate->numFI_; ++i)
@@ -1712,12 +1844,17 @@ Atpg::IMPLICATION_STATUS Atpg::doOneGateBackwardImplication(Gate *pGate)
 				Gate *pFaninGate = &pCircuit_->circuitGates_[pGate->faninVector_[i]];
 				if (pFaninGate->atpgVal_ == X)
 				{
+					if (isUncontrollableSource(pFaninGate))
+					{
+						return CONFLICT;
+					}
 					pFaninGate->atpgVal_ = InputNonControlVal;
 					backtrackImplicatedGateIDs_.push_back(pFaninGate->gateId_);
 					pushGateToEventStack(pGate->faninVector_[i]);
 					pushGateFanoutsToEventStack(pGate->faninVector_[i]);
 				}
 			}
+			gateID_to_valModified_[pGate->gateId_] = 1;
 			implicationStatus = BACKWARD;
 		}
 		else
@@ -1737,6 +1874,10 @@ Atpg::IMPLICATION_STATUS Atpg::doOneGateBackwardImplication(Gate *pGate)
 			if (NumOfX == 1)
 			{
 				Gate *pImpGate = &pCircuit_->circuitGates_[pGate->faninVector_[ImpPtr]];
+				if (isUncontrollableSource(pImpGate))
+				{
+					return CONFLICT;
+				}
 				pImpGate->atpgVal_ = InputControlVal;
 				gateID_to_valModified_[pGate->gateId_] = 1;
 				backtrackImplicatedGateIDs_.push_back(pImpGate->gateId_);
@@ -2140,7 +2281,7 @@ bool Atpg::checkForUnjustifiedBoundLines()
 //            ]
 // Date       [ WYH Ver. 1.0 started 2013/08/15 last modified 2023/01/06 ]
 // **************************************************************************
-void Atpg::findFinalObjective(BACKTRACE_STATUS &backtraceFlag, const bool &faultCanPropToPO, Gate *&pLastDFrontier)
+bool Atpg::findFinalObjective(BACKTRACE_STATUS &backtraceFlag, const bool &faultCanPropToPO, Gate *&pLastDFrontier)
 {
 	int index;
 	Gate *pGate = NULL;
@@ -2178,14 +2319,45 @@ void Atpg::findFinalObjective(BACKTRACE_STATUS &backtraceFlag, const bool &fault
 				{ // NO
 					// ADD A GATE IN D-FRONTIER TO THE SET OF INITIAL OBJECTIVES
 					pLastDFrontier = findClosestToPO(dFrontiers_, index);
-					initialObjectives_.push_back(pLastDFrontier->gateId_);
+					if (pLastDFrontier != NULL)
+					{
+						initialObjectives_.push_back(pLastDFrontier->gateId_);
+					}
 				}
 			}
 			else
 			{ // NO
 				// ADD A GATE IN D-FRONTIER TO THE SET OF INITIAL OBJECTIVES
 				pLastDFrontier = findClosestToPO(dFrontiers_, index);
-				initialObjectives_.push_back(pLastDFrontier->gateId_);
+				if (pLastDFrontier != NULL)
+				{
+					initialObjectives_.push_back(pLastDFrontier->gateId_);
+				}
+			}
+
+			// A head line that already has a decided value may still need upstream
+			// justification. If we only seed unjustified bound lines here, faults
+			// activated directly on a head line can bypass objective formation and
+			// collapse into false AU in multi-frame mode.
+			for (const int &gateID : headLineGateIDs_)
+			{
+				Gate *pHeadGate = &pCircuit_->circuitGates_[gateID];
+				if (pHeadGate->atpgVal_ == X)
+				{
+					continue;
+				}
+				if (gateID_to_valModified_[gateID])
+				{
+					continue;
+				}
+				if (pHeadGate->gateType_ == Gate::TIEX || pHeadGate->gateType_ == Gate::TIEZ)
+				{
+					continue;
+				}
+				if (std::find(initialObjectives_.begin(), initialObjectives_.end(), gateID) == initialObjectives_.end())
+				{
+					initialObjectives_.push_back(gateID);
+				}
 			}
 
 			// A
@@ -2194,10 +2366,15 @@ void Atpg::findFinalObjective(BACKTRACE_STATUS &backtraceFlag, const bool &fault
 			// CONTRADICTORY REQUIREMENT AT A FANOUT-POINT OCCURRED?
 			if (result == CONTRADICTORY)
 			{ // YES
+				if (finalObjectiveId < 0)
+				{
+					backtraceFlag = INITIAL;
+					return false;
+				}
 				// LET THE FANOUT-POINT OBJECTIVE BE FINAL OBJECTIVE TO ASSIGN VALUE
 				finalObjectives_.push_back(finalObjectiveId);
 				// EXIT
-				return;
+				return true;
 			}
 		}
 		else
@@ -2211,10 +2388,15 @@ void Atpg::findFinalObjective(BACKTRACE_STATUS &backtraceFlag, const bool &fault
 				// CONTRADICTORY REQUIREMENT AT A FANOUT-POINT OCCURRED?
 				if (result == CONTRADICTORY)
 				{ // YES
+					if (finalObjectiveId < 0)
+					{
+						backtraceFlag = INITIAL;
+						return false;
+					}
 					// LET THE FANOUT-POINT OBJECTIVE BE FINAL OBJECTIVE TO ASSIGN VALUE
 					finalObjectives_.push_back(finalObjectiveId);
 					// EXIT
-					return;
+					return true;
 				}
 			}
 		}
@@ -2241,11 +2423,26 @@ void Atpg::findFinalObjective(BACKTRACE_STATUS &backtraceFlag, const bool &fault
 					// LET THE HEAD OBJECTIVE BE FINAL OBJECTIVE
 					finalObjectives_.push_back(pGate->gateId_);
 					// EXIT
-					return;
+					return true;
 				}
+				if (pGate->gateType_ == Gate::TIEX || pGate->gateType_ == Gate::TIEZ)
+				{
+					continue;
+				}
+				// A decided head line may still need upstream justification. If we
+				// discard it here, a fault-activation assignment on a head line can
+				// collapse into a false AU before any real justification happens.
+				fanoutFreeBacktrace(pGate);
+				backtraceFlag = INITIAL;
+				break;
 			}
 		}
+		if (backtraceFlag == INITIAL && finalObjectives_.empty())
+		{
+			return false;
+		}
 	}
+	return false;
 }
 
 // **************************************************************************
@@ -2592,6 +2789,10 @@ int Atpg::doUniquePathSensitization(Gate &gate)
 				Gate *pFaninGate = &pCircuit_->circuitGates_[gate.faninVector_[i]];
 				if (pFaninGate->atpgVal_ == X)
 				{
+					if (isUncontrollableSource(pFaninGate))
+					{
+						return UNIQUE_PATH_SENSITIZE_FAIL;
+					}
 					pFaninGate->atpgVal_ = NonControlVal;
 					if (backwardImplicationLevel < pFaninGate->numLevel_) // backwardImplicationLevel becomes MAX of fan in level
 					{
@@ -2663,6 +2864,10 @@ int Atpg::doUniquePathSensitization(Gate &gate)
 
 					if (pFaninGate != pCurrGate && pFaninGate->atpgVal_ == X)
 					{
+						if (isUncontrollableSource(pFaninGate))
+						{
+							return UNIQUE_PATH_SENSITIZE_FAIL;
+						}
 						pFaninGate->atpgVal_ = NonControlVal; // Set input gate of pNextGate to pNextGate's NonControlVal
 						if (backwardImplicationLevel < pFaninGate->numLevel_)
 						{
@@ -2706,6 +2911,10 @@ int Atpg::doUniquePathSensitization(Gate &gate)
 							continue;
 						}
 
+						if (isUncontrollableSource(pFaninGate))
+						{
+							return UNIQUE_PATH_SENSITIZE_FAIL;
+						}
 						pFaninGate->atpgVal_ = NonControlVal; // set to NonControlVal
 
 						if (backwardImplicationLevel < pFaninGate->numLevel_)
@@ -2905,6 +3114,10 @@ int Atpg::setFaultyGate(Fault &fault)
 				{
 					if (pFaninGate->atpgVal_ == X)
 					{
+						if (isUncontrollableSource(pFaninGate))
+						{
+							return -1;
+						}
 						pFaninGate->atpgVal_ = pFaultyGate->getInputNonCtrlValue();
 						backtrackImplicatedGateIDs_.push_back(pFaninGate->gateId_);
 					}
@@ -2981,6 +3194,10 @@ int Atpg::setFaultyGate(Fault &fault)
 		else if (pFaultyGate->gateType_ == Gate::INV || pFaultyGate->gateType_ == Gate::BUF || pFaultyGate->gateType_ == Gate::PO || pFaultyGate->gateType_ == Gate::PPO)
 		{
 			Gate *pFaninGate = &pCircuit_->circuitGates_[pFaultyGate->faninVector_[0]];
+			if (isUncontrollableSource(pFaninGate))
+			{
+				return -1;
+			}
 			gateID_to_valModified_[pFaultyGate->gateId_] = 1;
 
 			Value Val = (FaultyValue == D) ? H : L;
@@ -3004,6 +3221,10 @@ int Atpg::setFaultyGate(Fault &fault)
 				Gate *pFaninGate = &pCircuit_->circuitGates_[pFaultyGate->faninVector_[i]];
 				if (pFaninGate->atpgVal_ == X)
 				{
+					if (isUncontrollableSource(pFaninGate))
+					{
+						return -1;
+					}
 					pFaninGate->atpgVal_ = pFaultyGate->getInputNonCtrlValue();
 					backtrackImplicatedGateIDs_.push_back(pFaninGate->gateId_);
 					// schedule all fanout gate of the pFaninGate
@@ -3396,7 +3617,7 @@ Atpg::BACKTRACE_RESULT Atpg::multipleBacktrace(BACKTRACE_STATUS atpgStatus, int 
 						{
 							if (pFaninGate->gateType_ == Gate::TIEX || pFaninGate->gateType_ == Gate::TIEZ)
 							{
-								possibleFinalObjectiveID = pCurrentObj->gateId_;
+								possibleFinalObjectiveID = -1;
 								return CONTRADICTORY;
 							}
 							// first find this fanout point,  add to
@@ -3452,7 +3673,7 @@ Atpg::BACKTRACE_RESULT Atpg::multipleBacktrace(BACKTRACE_STATUS atpgStatus, int 
 							{
 								if (pFaninGate->gateType_ == Gate::TIEX || pFaninGate->gateType_ == Gate::TIEZ)
 								{
-									possibleFinalObjectiveID = pCurrentObj->gateId_;
+									possibleFinalObjectiveID = -1;
 									return CONTRADICTORY;
 								}
 								// add gate into Current Objective set
@@ -3471,6 +3692,12 @@ Atpg::BACKTRACE_RESULT Atpg::multipleBacktrace(BACKTRACE_STATUS atpgStatus, int 
 			case FAN_OBJ_DETERMINE:
 				// TAKE OUT A FANOUT-POINT OBJECTIVE p CLOSEST TO A PRIMARY OUTPUT
 				pCurrentObj = findClosestToPO(fanoutObjectives_, index);
+				if (pCurrentObj == NULL || index < 0)
+				{
+					fanoutObjectives_.clear();
+					atpgStatus = CHECK_AND_SELECT;
+					break;
+				}
 
 				// specified by the index from FanObject
 				vecDelete(fanoutObjectives_, index);
@@ -3813,17 +4040,22 @@ Gate *Atpg::findClosestToPO(std::vector<int> &gateVec, int &index)
 
 	if (gateVec.empty())
 	{
+		index = -1;
 		return NULL;
 	}
 
-	pCloseGate = &pCircuit_->circuitGates_[gateVec.back()];
-	index = gateVec.size() - 1;
-	for (int i = gateVec.size() - 2; i >= 0; --i)
+	index = -1;
+	for (int i = gateVec.size() - 1; i >= 0; --i)
 	{
-		if (pCircuit_->circuitGates_[gateVec[i]].depthFromPo_ < pCloseGate->depthFromPo_)
+		Gate *pGate = &pCircuit_->circuitGates_[gateVec[i]];
+		if (pGate->depthFromPo_ >= INFINITE)
+		{
+			continue;
+		}
+		if (pCloseGate == NULL || pGate->depthFromPo_ < pCloseGate->depthFromPo_)
 		{
 			index = i;
-			pCloseGate = &pCircuit_->circuitGates_[gateVec[i]];
+			pCloseGate = pGate;
 		}
 	}
 	return pCloseGate;
@@ -4182,6 +4414,10 @@ int Atpg::setUpFirstTimeFrame(Fault &fault)
 		else if (pFaultyLine->gateType_ == Gate::INV || pFaultyLine->gateType_ == Gate::BUF || pFaultyLine->gateType_ == Gate::PO || pFaultyLine->gateType_ == Gate::PPO)
 		{
 			Gate *pFaninGate = &pCircuit_->circuitGates_[pFaultyLine->faninVector_[0]];
+			if (isUncontrollableSource(pFaninGate))
+			{
+				return -1;
+			}
 			gateID_to_valModified_[pFaultyLine->gateId_] = 1;
 
 			Value Val = FaultyValue == H ? H : L;
@@ -4204,6 +4440,10 @@ int Atpg::setUpFirstTimeFrame(Fault &fault)
 				// if the value has not been set, then set it to non-control value
 				if (pFaninGate->atpgVal_ == X)
 				{
+					if (isUncontrollableSource(pFaninGate))
+					{
+						return -1;
+					}
 					pFaninGate->atpgVal_ = pFaultyLine->getInputNonCtrlValue();
 					backtrackImplicatedGateIDs_.push_back(pFaninGate->gateId_);
 					pushGateToEventStack(pFaultyLine->faninVector_[i]);
@@ -4583,7 +4823,7 @@ void Atpg::testClearFaultEffect(FaultPtrList &faultListToTest)
 {
 	for (Fault *pFault : faultListToTest)
 	{
-		generateSinglePatternOnTargetFault(*pFault, false);
+		generateSinglePatternOnTargetFault(mapSafToObservationFrame(pCircuit_, *pFault), false);
 		clearAllFaultEffectByEvaluation();
 
 		for (int i = 0; i < pCircuit_->totalGate_; ++i)

@@ -10,6 +10,23 @@
 using namespace IntfNs;
 using namespace CoreNs;
 
+namespace
+{
+inline bool isStuckAtFault(const Fault *pfault)
+{
+	return pfault->faultType_ == Fault::SA0 || pfault->faultType_ == Fault::SA1;
+}
+
+inline int safObservationFrameGateId(const Circuit *pCircuit, const Fault *pfault)
+{
+	if (!isStuckAtFault(pfault) || pCircuit->numFrame_ <= 1)
+	{
+		return pfault->gateID_;
+	}
+	return pfault->gateID_ + (pCircuit->numFrame_ - 1) * pCircuit->numGate_;
+}
+}
+
 // **************************************************************************
 // Function   [ Simulator::eventFaultSim ]
 // Commenter  [ CJY, CBH, PYH ]
@@ -309,7 +326,8 @@ bool Simulator::parallelFaultCheckActivation(const Fault *const pfault)
 {
 	// If output fault, faultyGate = gateID of the faulty gate.
 	// Else if input fault, faultyGate = gateID of the faulty gate's fanin array.
-	const int &faultyGate = pfault->faultyLine_ == 0 ? pfault->gateID_ : pCircuit_->circuitGates_[pfault->gateID_].faninVector_[pfault->faultyLine_ - 1];
+	const int mappedGateId = safObservationFrameGateId(pCircuit_, pfault);
+	const int faultyGate = pfault->faultyLine_ == 0 ? mappedGateId : pCircuit_->circuitGates_[mappedGateId].faninVector_[pfault->faultyLine_ - 1];
 	const ParallelValue &faultyGateGoodSimLow = pCircuit_->circuitGates_[faultyGate].goodSimLow_;
 	const ParallelValue &faultyGateGoodSimHigh = pCircuit_->circuitGates_[faultyGate].goodSimHigh_;
 
@@ -353,7 +371,7 @@ bool Simulator::parallelFaultCheckActivation(const Fault *const pfault)
 // **************************************************************************
 void Simulator::parallelFaultFaultInjection(const Fault *const pfault, const size_t &injectFaultIndex)
 {
-	int faultyGate = pfault->gateID_;
+	int faultyGate = safObservationFrameGateId(pCircuit_, pfault);
 	switch (pfault->faultType_)
 	{
 		case Fault::SA0:
@@ -472,7 +490,8 @@ bool Simulator::parallelPatternCheckActivation(const Fault *const pfault)
 {
 	// If output fault, faultyGate = gateID of the faulty gate.
 	// Else if input fault, faultyGate = gateID of the faulty gate's fanin array.
-	const int &faultyGate = pfault->faultyLine_ == 0 ? pfault->gateID_ : pCircuit_->circuitGates_[pfault->gateID_].faninVector_[pfault->faultyLine_ - 1];
+	const int mappedGateId = safObservationFrameGateId(pCircuit_, pfault);
+	const int faultyGate = pfault->faultyLine_ == 0 ? mappedGateId : pCircuit_->circuitGates_[mappedGateId].faninVector_[pfault->faultyLine_ - 1];
 	const ParallelValue &faultyGateGoodSimLow = pCircuit_->circuitGates_[faultyGate].goodSimLow_;
 	const ParallelValue &faultyGateGoodSimHigh = pCircuit_->circuitGates_[faultyGate].goodSimHigh_;
 
@@ -518,7 +537,7 @@ bool Simulator::parallelPatternCheckActivation(const Fault *const pfault)
 // **************************************************************************
 void Simulator::parallelPatternFaultInjection(const Fault *const pfault)
 {
-	int faultyGate = pfault->gateID_;
+	int faultyGate = safObservationFrameGateId(pCircuit_, pfault);
 	switch (pfault->faultType_)
 	{
 		case Fault::SA0:
@@ -630,39 +649,59 @@ void Simulator::parallelPatternSetPattern(PatternProcessor *pPatternProcessor, c
 	}
 	for (int j = patternStartIndex; j < endpat; ++j)
 	{
-		// Assign PIs.
-		if (!pPatternProcessor->patternVector_[j].PI1_.empty())
+		// Assign PIs for every available frame.
+		const Pattern &pattern = pPatternProcessor->patternVector_[j];
+		if (!pattern.PIFrames_.empty())
+		{
+			for (int frame = 0; frame < pCircuit_->numFrame_ &&
+			                        frame < (int)pattern.PIFrames_.size();
+			     ++frame)
+			{
+				for (int k = 0; k < pPatternProcessor->numPI_; ++k)
+				{
+					const int index = k + frame * pCircuit_->numGate_;
+					if (pattern.PIFrames_[frame][k] == L)
+					{
+						setBitValue(pCircuit_->circuitGates_[index].goodSimLow_, j - patternStartIndex, H);
+					}
+					else if (pattern.PIFrames_[frame][k] == H)
+					{
+						setBitValue(pCircuit_->circuitGates_[index].goodSimHigh_, j - patternStartIndex, H);
+					}
+				}
+			}
+		}
+		else if (!pattern.PI1_.empty())
 		{
 			for (int k = 0; k < pPatternProcessor->numPI_; ++k)
 			{
-				if (pPatternProcessor->patternVector_[j].PI1_[k] == L)
+				if (pattern.PI1_[k] == L)
 				{
 					setBitValue(pCircuit_->circuitGates_[k].goodSimLow_, j - patternStartIndex, H);
 				}
-				else if (pPatternProcessor->patternVector_[j].PI1_[k] == H)
+				else if (pattern.PI1_[k] == H)
 				{
 					setBitValue(pCircuit_->circuitGates_[k].goodSimHigh_, j - patternStartIndex, H);
 				}
 			}
-		}
-
-		if (!pPatternProcessor->patternVector_[j].PI2_.empty() && pCircuit_->numFrame_ > 1)
-		{
-			for (int k = 0; k < pPatternProcessor->numPI_; ++k)
+			if (!pattern.PI2_.empty() && pCircuit_->numFrame_ > 1)
 			{
-				int index = k + pCircuit_->numGate_;
-				if (pPatternProcessor->patternVector_[j].PI2_[k] == L)
+				for (int k = 0; k < pPatternProcessor->numPI_; ++k)
 				{
-					setBitValue(pCircuit_->circuitGates_[index].goodSimLow_, j - patternStartIndex, H);
-				}
-				else if (pPatternProcessor->patternVector_[j].PI2_[k] == H)
-				{
-					setBitValue(pCircuit_->circuitGates_[index].goodSimHigh_, j - patternStartIndex, H);
+					int index = k + pCircuit_->numGate_;
+					if (pattern.PI2_[k] == L)
+					{
+						setBitValue(pCircuit_->circuitGates_[index].goodSimLow_, j - patternStartIndex, H);
+					}
+					else if (pattern.PI2_[k] == H)
+					{
+						setBitValue(pCircuit_->circuitGates_[index].goodSimHigh_, j - patternStartIndex, H);
+					}
 				}
 			}
 		}
 		// Assign PPIS
-		if (!pPatternProcessor->patternVector_[j].PPI_.empty())
+		if (!pattern.PPI_.empty())
 		{
 			for (int k = 0; k < pPatternProcessor->numPPI_; ++k)
 			{
@@ -671,11 +710,11 @@ void Simulator::parallelPatternSetPattern(PatternProcessor *pPatternProcessor, c
 					continue;
 				}
 				int index = k + pCircuit_->numPI_;
-				if (pPatternProcessor->patternVector_[j].PPI_[k] == L)
+				if (pattern.PPI_[k] == L)
 				{
 					setBitValue(pCircuit_->circuitGates_[index].goodSimLow_, j - patternStartIndex, H);
 				}
-				else if (pPatternProcessor->patternVector_[j].PPI_[k] == H)
+				else if (pattern.PPI_[k] == H)
 				{
 					setBitValue(pCircuit_->circuitGates_[index].goodSimHigh_, j - patternStartIndex, H);
 				}

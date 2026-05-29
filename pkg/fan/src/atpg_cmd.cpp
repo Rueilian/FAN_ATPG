@@ -152,6 +152,23 @@ bool ReportPatCmd::exec(const std::vector<std::string> &argv)
 	for (int i = 0; i < (int)fanMgr_->pcoll->patternVector_.size(); ++i)
 	{
 		std::cout << "#    pattern " << i << "\n";
+		if (!fanMgr_->pcoll->patternVector_[i].PIFrames_.empty() &&
+		    fanMgr_->pcoll->patternVector_[i].PIFrames_.size() > 2)
+		{
+			for (int frame = 0;
+			     frame < (int)fanMgr_->pcoll->patternVector_[i].PIFrames_.size();
+			     ++frame)
+			{
+				std::cout << "#      pi" << (frame + 1) << ": ";
+				for (int j = 0; j < fanMgr_->pcoll->numPI_; ++j)
+				{
+					printValue(fanMgr_->pcoll->patternVector_[i].PIFrames_[frame][j]);
+				}
+				std::cout << "\n";
+			}
+		}
+		else
+		{
 		std::cout << "#      pi1: ";
 		if (!fanMgr_->pcoll->patternVector_[i].PI1_.empty())
 		{
@@ -170,6 +187,7 @@ bool ReportPatCmd::exec(const std::vector<std::string> &argv)
 			}
 		}
 		std::cout << "\n";
+		}
 		std::cout << "#      ppi: ";
 		if (!fanMgr_->pcoll->patternVector_[i].PPI_.empty())
 		{
@@ -335,6 +353,25 @@ void AddFaultCmd::addAllFault()
 	std::cout << "    " << (double)stat.vmSize / 1024.0 << " MB\n";
 }
 
+Fault *AddFaultCmd::findMatchingFault(int gateID, Fault::FAULT_TYPE faultType, int faultyLine) const
+{
+	for (Fault &fault : fanMgr_->fListExtract->extractedFaults_)
+	{
+		if (fault.gateID_ == gateID && fault.faultType_ == faultType && fault.faultyLine_ == faultyLine)
+		{
+			return &fault;
+		}
+	}
+	for (Fault &fault : fanMgr_->fListExtract->uncollapsedFaults_)
+	{
+		if (fault.gateID_ == gateID && fault.faultType_ == faultType && fault.faultyLine_ == faultyLine)
+		{
+			return &fault;
+		}
+	}
+	return NULL;
+}
+
 bool AddFaultCmd::addPinFault(const std::string &type, const std::string &pin)
 {
 	Port *p = fanMgr_->nl->getTop()->getPort(pin.c_str());
@@ -345,9 +382,23 @@ bool AddFaultCmd::addPinFault(const std::string &type, const std::string &pin)
 		return false;
 	}
 	int gid = fanMgr_->cir->portIndexToGateIndex_[p->id_];
-	int offset = (type == "SA0" || type == "STR") ? 0 : 1;
-	int fid = fanMgr_->fListExtract->gateIndexToFaultIndex_[gid] + offset;
-	Fault *f = &fanMgr_->fListExtract->extractedFaults_[fid];
+	Fault::FAULT_TYPE faultType = (type == "SA0") ? Fault::SA0 :
+		(type == "SA1") ? Fault::SA1 :
+		(type == "STR") ? Fault::STR : Fault::STF;
+	int faultyLine = 0;
+	if (fanMgr_->cir->circuitGates_[gid].gateType_ == Gate::PO)
+	{
+		// Top-level output ports are represented by PO gates whose observable
+		// stuck-at faults live on the single PO input line in the extracted list.
+		faultyLine = 1;
+	}
+	Fault *f = findMatchingFault(gid, faultType, faultyLine);
+	if (!f)
+	{
+		std::cerr << "**ERROR AddFaultCmd::exec(): fault `" << type << " " << pin
+							<< "' not found in extracted fault list\n";
+		return false;
+	}
 	fanMgr_->fListExtract->faultsInCircuit_.push_back(f);
 	return true;
 }
@@ -394,9 +445,16 @@ bool AddFaultCmd::addCellFault(const std::string &type, const std::string &cell,
 			}
 			pid = (*it)->id_ - nOutput + 1;
 		}
-		int offset = (type == "SA0" || type == "STR") ? 0 : 1;
-		int fid = fanMgr_->fListExtract->gateIndexToFaultIndex_[gid] + 2 * pid + offset;
-		Fault *f = &fanMgr_->fListExtract->extractedFaults_[fid];
+		Fault::FAULT_TYPE faultType = (type == "SA0") ? Fault::SA0 :
+			(type == "SA1") ? Fault::SA1 :
+			(type == "STR") ? Fault::STR : Fault::STF;
+		Fault *f = findMatchingFault(gid, faultType, pid);
+		if (!f)
+		{
+			std::cerr << "**ERROR AddFaultCmd::exec(): fault `" << type << " " << cell
+								<< "/" << pin << "' not found in extracted fault list\n";
+			return false;
+		}
 		fanMgr_->fListExtract->faultsInCircuit_.push_back(f);
 	}
 	return true;

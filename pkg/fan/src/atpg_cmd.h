@@ -46,6 +46,7 @@ public:
 
 private:
     void   addAllFault();
+    CoreNs::Fault *findMatchingFault(int gateID, CoreNs::Fault::FAULT_TYPE faultType, int faultyLine) const;
     bool   addPinFault(const std::string &type, const std::string &pin);
     bool   addCellFault(const std::string &type, const std::string &cell,
                         const std::string &pin);

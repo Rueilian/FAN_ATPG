@@ -135,7 +135,7 @@ namespace CoreNs
 		void updateDFrontiers();
 		bool checkIfFaultHasPropagatedToPO(bool &faultHasPropagatedToPO);
 		bool checkForUnjustifiedBoundLines();
-		void findFinalObjective(BACKTRACE_STATUS &backtraceFlag, const bool &faultCanPropToPO, Gate *&pLastDFrontier);
+		bool findFinalObjective(BACKTRACE_STATUS &backtraceFlag, const bool &faultCanPropToPO, Gate *&pLastDFrontier);
 		void clearAllObjectives();
 		void assignAtpgValToFinalObjectiveGates();
 		void justifyFreeLines(Fault &originalFault);
@@ -176,6 +176,7 @@ namespace CoreNs
 		inline int popEventStack(const int &level);								 // pop and return from eventStack[level]
 		inline int pushGateFanoutsToEventStack(const int &gateID); // push all the gate's output to event stack and return pushed gate count
 
+		inline bool hasPendingEvents() const;
 		inline void clearAllEvents();
 
 		inline int vecPop(std::vector<int> &vec);
@@ -747,16 +748,25 @@ namespace CoreNs
 	// **************************************************************************
 	inline void Atpg::writeAtpgValToPatternPI(Pattern &pattern)
 	{
+		pattern.PIFrames_.resize(pCircuit_->numFrame_);
+		for (int frame = 0; frame < pCircuit_->numFrame_; ++frame)
+		{
+			pattern.PIFrames_[frame].resize(pCircuit_->numPI_);
+			for (int i = 0; i < pCircuit_->numPI_; ++i)
+			{
+				pattern.PIFrames_[frame][i] =
+					pCircuit_->circuitGates_[i + frame * pCircuit_->numGate_].atpgVal_;
+			}
+		}
 		for (int i = 0; i < pCircuit_->numPI_; ++i)
 		{
-			pattern.PI1_[i] = pCircuit_->circuitGates_[i].atpgVal_;
+			pattern.PI1_[i] = pattern.PIFrames_[0][i];
 		}
-		// if (pattern.PI2_ != NULL && pCircuit_->numFrame_ > 1)
 		if (!(pattern.PI2_.empty()) && pCircuit_->numFrame_ > 1)
 		{
 			for (int i = 0; i < pCircuit_->numPI_; ++i)
 			{
-				pattern.PI2_[i] = pCircuit_->circuitGates_[i + pCircuit_->numGate_].atpgVal_;
+				pattern.PI2_[i] = pattern.PIFrames_[1][i];
 			}
 		}
 		for (int i = 0; i < pCircuit_->numPPI_; ++i)
@@ -896,6 +906,18 @@ namespace CoreNs
 				gateID_to_valModified_[gateID] = 0;
 			}
 		}
+	}
+
+	inline bool Atpg::hasPendingEvents() const
+	{
+		for (const std::stack<int> &eventStack : circuitLevel_to_EventStack_)
+		{
+			if (!eventStack.empty())
+			{
+				return true;
+			}
+		}
+		return false;
 	}
 
 	inline int Atpg::vecPop(std::vector<int> &vec) // listPop => vecPop by wang

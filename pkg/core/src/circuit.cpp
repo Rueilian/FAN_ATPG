@@ -51,35 +51,40 @@ bool Circuit::buildCircuit(Netlist *const pNetlist, const int &numFrame,
 	// Map the netlist to the circuit.
 	mapNetlistToCircuit();
 
-	// Allocate gate memory.
-	circuitGates_.resize(numGate_ * numFrame);
-
-	// Create gates in the circuit.
-	createCircuitGates();
-
-	// Resolve non-scan FF names to PPI indices for PARTIAL_SEQUENTIAL mode.
-	// Even for numFrame_ == 1 we still need the flags so a no-recovery partial-scan
-	// run can treat non-scan FF state as uncontrolled instead of freely assignable.
-	if (!nonscanCellNames_.empty()) {
+	// Resolve non-scan FF names before createCircuitGates() so frame-0 PPI gates
+	// are built with the correct partial-scan semantics (e.g. TIEX for T=1).
+	if (!nonscanCellNames_.empty())
+	{
 		isPpiNonscan_.assign(numPPI_, false);
-		for (const std::string& name : nonscanCellNames_) {
-			IntfNs::Cell* c = pNetlist->getTop()->getCell(name.c_str());
-			if (!c) {
+		for (const std::string &name : nonscanCellNames_)
+		{
+			IntfNs::Cell *c = pNetlist->getTop()->getCell(name.c_str());
+			if (!c)
+			{
 				std::cerr << "**WARNING Circuit::buildCircuit(): non-scan FF `"
 				          << name << "' not found, skipping\n";
 				continue;
 			}
 			int gateIdx = cellIndexToGateIndex_[c->id_];
 			int ppiIdx = gateIdx - numPI_;
-			if (ppiIdx >= 0 && ppiIdx < numPPI_) {
+			if (ppiIdx >= 0 && ppiIdx < numPPI_)
+			{
 				isPpiNonscan_[ppiIdx] = true;
-			} else {
+			}
+			else
+			{
 				std::cerr << "**WARNING Circuit::buildCircuit(): cell `"
 				          << name << "' is not a FF (PPI), skipping\n";
 			}
 		}
 		timeFrameConnectType_ = PARTIAL_SEQUENTIAL;
 	}
+
+	// Allocate gate memory.
+	circuitGates_.resize(numGate_ * numFrame);
+
+	// Create gates in the circuit.
+	createCircuitGates();
 
 	connectMultipleTimeFrame(); // For multiple time frames.
 	assignMinLevelOfFanins();
