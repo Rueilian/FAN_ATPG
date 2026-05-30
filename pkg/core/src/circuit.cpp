@@ -309,7 +309,7 @@ void Circuit::createCircuitPPI()
 		circuitGates_[ppiGateID].primitiveId_ = 0;
 		circuitGates_[ppiGateID].numLevel_ = 0;
 		circuitGates_[ppiGateID].gateType_ =
-			(timeFrameConnectType_ == PARTIAL_SEQUENTIAL && numFrame_ == 1 &&
+			(timeFrameConnectType_ == PARTIAL_SEQUENTIAL &&
 			 !isPpiNonscan_.empty() && isPpiNonscan_[i])
 				? Gate::TIEX
 				: Gate::PPI;
@@ -803,7 +803,8 @@ void Circuit::connectMultipleTimeFrame()
 			circuitGates_[gateID].numLevel_ = circuitLvl_ * i + f0[j].numLevel_;
 			circuitGates_[gateID].gateType_ = f0[j].gateType_;
 			circuitGates_[gateID].frame_ = i;
-			if (f0[j].gateType_ != Gate::PPI && f0[j].gateType_ != Gate::PPO)
+			const bool isPpiSlot = j >= numPI_ && j < numPI_ + numPPI_;
+			if (!isPpiSlot && f0[j].gateType_ != Gate::PPO)
 			{ // If not PPIs or PPOs.
 				// Add corresponding fanout.
 				circuitGates_[gateID].numFO_ = f0[j].numFO_;
@@ -820,7 +821,7 @@ void Circuit::connectMultipleTimeFrame()
 					circuitGates_[gateID].faninVector_[k] = f0[j].faninVector_[k] + offset;
 				}
 			}
-			else if (f0[j].gateType_ == Gate::PPI)
+			else if (isPpiSlot)
 			{ // If PPIs.
 				// Add corresponding fanout.
 				circuitGates_[gateID].numFO_ = f0[j].numFO_;

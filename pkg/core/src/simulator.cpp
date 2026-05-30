@@ -422,8 +422,7 @@ void Simulator::parallelFaultCheckDetectionDropFaults(FaultPtrList &remainingFau
 		const int outputIndex = i - start;
 		if (outputIndex >= pCircuit_->numPO_)
 		{
-			const int ppoIndex = outputIndex - pCircuit_->numPO_;
-			if (!pCircuit_->isObservablePpoIndex(ppoIndex))
+			if (!pCircuit_->isObservablePpoGateId(i))
 			{
 				continue;
 			}
@@ -588,8 +587,7 @@ void Simulator::parallelPatternCheckDetection(Fault *const pfault)
 		const int outputIndex = i - start;
 		if (outputIndex >= pCircuit_->numPO_)
 		{
-			const int ppoIndex = outputIndex - pCircuit_->numPO_;
-			if (!pCircuit_->isObservablePpoIndex(ppoIndex))
+			if (!pCircuit_->isObservablePpoGateId(i))
 			{
 				continue;
 			}
@@ -717,6 +715,35 @@ void Simulator::parallelPatternSetPattern(PatternProcessor *pPatternProcessor, c
 				else if (pattern.PPI_[k] == H)
 				{
 					setBitValue(pCircuit_->circuitGates_[index].goodSimHigh_, j - patternStartIndex, H);
+				}
+			}
+		}
+
+		// PARTIAL_SEQUENTIAL: replay free scan-FF PPIs for frames >= 1 from PPIFrames_.
+		// Non-scan FFs are skipped (TIEX at frame 0, BUF-driven afterward). Gates were
+		// already reset to X at the top of this function.
+		if (pCircuit_->timeFrameConnectType_ == Circuit::PARTIAL_SEQUENTIAL &&
+		    pCircuit_->numFrame_ > 1 && !pattern.PPIFrames_.empty())
+		{
+			for (int frame = 1; frame < pCircuit_->numFrame_ &&
+			                    frame < (int)pattern.PPIFrames_.size();
+			     ++frame)
+			{
+				for (int k = 0; k < pPatternProcessor->numPPI_; ++k)
+				{
+					if (!pCircuit_->isPpiNonscan_.empty() && pCircuit_->isPpiNonscan_[k])
+					{
+						continue;
+					}
+					int index = k + pCircuit_->numPI_ + frame * pCircuit_->numGate_;
+					if (pattern.PPIFrames_[frame][k] == L)
+					{
+						setBitValue(pCircuit_->circuitGates_[index].goodSimLow_, j - patternStartIndex, H);
+					}
+					else if (pattern.PPIFrames_[frame][k] == H)
+					{
+						setBitValue(pCircuit_->circuitGates_[index].goodSimHigh_, j - patternStartIndex, H);
+					}
 				}
 			}
 		}

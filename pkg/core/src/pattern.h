@@ -22,6 +22,10 @@ namespace CoreNs
 		inline Pattern() {}
 		inline Pattern(Circuit *pCircuit);
 		std::vector<std::vector<Value>> PIFrames_;
+		// Per-frame scan-FF PPI values. In PARTIAL_SEQUENTIAL mode scan FFs are free
+		// inputs at every frame, so a single PPI_ vector (frame 0) is insufficient for
+		// T>1; this carries all frames so the saved pattern reproduces ATPG detection.
+		std::vector<std::vector<Value>> PPIFrames_;
 		std::vector<Value> PI1_;
 		std::vector<Value> PI2_;
 		std::vector<Value> PPI_;
@@ -33,6 +37,7 @@ namespace CoreNs
 	};
 	inline Pattern::Pattern(Circuit *pCircuit)
 			: PIFrames_(pCircuit->numFrame_, std::vector<Value>(pCircuit->numPI_)),
+				PPIFrames_(pCircuit->numFrame_, std::vector<Value>(pCircuit->numPPI_)),
 				PI1_(pCircuit->numPI_),
 				PPI_(pCircuit->numPPI_),
 				PO1_(pCircuit->numPO_),
@@ -56,6 +61,11 @@ namespace CoreNs
 		for (std::vector<Value> &frame : PIFrames_)
 		{
 			frame.resize(pCircuit->numPI_);
+		}
+		PPIFrames_.resize(pCircuit->numFrame_);
+		for (std::vector<Value> &frame : PPIFrames_)
+		{
+			frame.resize(pCircuit->numPPI_);
 		}
 		PI2_.resize(pCircuit->numPI_);
 		PO2_.resize(pCircuit->numPO_);

@@ -36,7 +36,7 @@ namespace CoreNs
 		std::vector<std::string> nonscanCellNames_;
 		// Per-PPI flag: true = non-scan FF (state carries across frames). Populated by buildCircuit().
 		std::vector<bool> isPpiNonscan_;
-		inline bool isObservablePpoIndex(const int &ppiIndex) const;
+		inline bool isObservablePpoGateId(const int &gateId) const;
 
 		// Info for one time frame.
 		IntfNs::Netlist *pNetlist_; // Corresponding netlist.
@@ -99,9 +99,15 @@ namespace CoreNs
 		timeFrameConnectType_ = CAPTURE;
 	}
 
-	inline bool Circuit::isObservablePpoIndex(const int &ppiIndex) const
+	inline bool Circuit::isObservablePpoGateId(const int &gateId) const
 	{
-		return isPpiNonscan_.empty() || !isPpiNonscan_[ppiIndex];
+		if (isPpiNonscan_.empty())
+		{
+			return true;
+		}
+		const int finalPpoStart = totalGate_ - numPPI_;
+		const int ppiIndex = gateId - finalPpoStart;
+		return ppiIndex >= 0 && ppiIndex < numPPI_ && !isPpiNonscan_[ppiIndex];
 	}
 };
 

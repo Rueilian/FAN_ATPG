@@ -349,6 +349,12 @@ void PatternReader::assignValue(std::vector<Value> &valueVector, const char *con
 //								Output the pattern to the given input file name
 //								with LaDS's own *.pat pattern format.
 // 								Support at most 2 time frames.
+// 								NOTE: PARTIAL_SEQUENTIAL with T>2 uses PIFrames_/PPIFrames_
+// 								internally for ATPG/fault-sim correctness, but this on-disk
+// 								format only serializes PI1_/PI2_ and a single PPI_/PPO_, so
+// 								exported files do not reflect frames beyond the first two.
+// 								Reported fault coverage is unaffected (it is computed from the
+// 								in-memory multi-frame replay, not from these files).
 //							arguments:
 // 								[in] fname : The file name to be written to.
 //								[out] bool : Output written successfully or not.

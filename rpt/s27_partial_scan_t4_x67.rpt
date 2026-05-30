@@ -1,0 +1,29 @@
+#                 Statistics Report
+#  Circuit name                                  s27
+#  Fault model                                   SAF
+#  Pattern type                                BASIC
+#  -------------------------------------------------
+#  Fault classes                             #faults
+#  ----------------------------  -------------------
+#    FU (full)                                    90
+#    FU (collapsed)                               70
+#    --------------------------  -------------------
+#    UD (undetected)                               2
+#    PT (possibly testable)                        0
+#    AU (atpg untestable)                         10
+#    RE (redundant)                                0
+#    AB (atpg abort)                               0
+#    TI (tied)                                     0
+#    --------------------------  -------------------
+#    DT (detected)                                78
+#  -------------------------------------------------
+#  Coverage                               percentage
+#    --------------------------  -------------------
+#    test coverage                             97.5%
+#    fault coverage                           86.67%
+#    atpg effectiveness                       97.78%
+#  -------------------------------------------------
+#  #Patterns                                       4
+#  -------------------------------------------------
+#  ATPG runtime                           0.000133 s
+#  -------------------------------------------------

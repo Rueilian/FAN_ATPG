@@ -538,6 +538,41 @@ namespace CoreNs
 				}
 			}
 		}
+
+		// PARTIAL_SEQUENTIAL: scan FFs are free inputs at every frame, so replay their
+		// per-frame values from PPIFrames_. Non-scan FFs are skipped (frame 0 is TIEX,
+		// later frames are BUF-driven by the previous frame's PPO), leaving them for
+		// goodSim to evaluate. The reset is unconditional so a pattern without
+		// PPIFrames_ cannot leak stale frame>=1 scan-PPI values from a prior pattern.
+		if (pCircuit_->timeFrameConnectType_ == Circuit::PARTIAL_SEQUENTIAL &&
+		    pCircuit_->numFrame_ > 1)
+		{
+			const bool hasFrames = !pattern.PPIFrames_.empty();
+			for (int frame = 1; frame < pCircuit_->numFrame_; ++frame)
+			{
+				for (int i = 0; i < pCircuit_->numPPI_; ++i)
+				{
+					if (!pCircuit_->isPpiNonscan_.empty() && pCircuit_->isPpiNonscan_[i])
+					{
+						continue;
+					}
+					const int gateIndex = pCircuit_->numPI_ + i + frame * pCircuit_->numGate_;
+					pCircuit_->circuitGates_[gateIndex].goodSimLow_ = PARA_L;
+					pCircuit_->circuitGates_[gateIndex].goodSimHigh_ = PARA_L;
+					if (hasFrames && frame < (int)pattern.PPIFrames_.size())
+					{
+						if (pattern.PPIFrames_[frame][i] == L)
+						{
+							pCircuit_->circuitGates_[gateIndex].goodSimLow_ = PARA_H;
+						}
+						else if (pattern.PPIFrames_[frame][i] == H)
+						{
+							pCircuit_->circuitGates_[gateIndex].goodSimHigh_ = PARA_H;
+						}
+					}
+				}
+			}
+		}
 	}
 };
 

@@ -190,8 +190,7 @@ void Atpg::calculateGateDepthFromPO()
 		}
 		else if (gate.gateType_ == Gate::PPO)
 		{
-			const int ppoIndex = gateID - (pCircuit_->totalGate_ - pCircuit_->numPPI_);
-			if (pCircuit_->isObservablePpoIndex(ppoIndex))
+			if (pCircuit_->isObservablePpoGateId(gateID))
 			{
 				gate.depthFromPo_ = 0;
 			}
@@ -2217,8 +2216,8 @@ bool Atpg::checkIfFaultHasPropagatedToPO(bool &faultHasPropagatedToPO)
 	{
 		if (i < pCircuit_->numPPI_)
 		{
-			const int ppoIndex = pCircuit_->numPPI_ - 1 - i;
-			if (!pCircuit_->isObservablePpoIndex(ppoIndex))
+			const int outputGateId = pCircuit_->totalGate_ - i - 1;
+			if (!pCircuit_->isObservablePpoGateId(outputGateId))
 			{
 				continue;
 			}
@@ -2825,8 +2824,7 @@ int Atpg::doUniquePathSensitization(Gate &gate)
 		}
 		if (pCurrGate->gateType_ == Gate::PPO)
 		{
-			const int ppoIndex = pCurrGate->gateId_ - (pCircuit_->totalGate_ - pCircuit_->numPPI_);
-			if (pCircuit_->isObservablePpoIndex(ppoIndex))
+			if (pCircuit_->isObservablePpoGateId(pCurrGate->gateId_))
 			{
 				break;
 			}
@@ -3001,8 +2999,7 @@ bool Atpg::xPathTracing(Gate *pGate)
 	}
 	if (pGate->gateType_ == Gate::PPO)
 	{
-		const int ppoIndex = pGate->gateId_ - (pCircuit_->totalGate_ - pCircuit_->numPPI_);
-		if (pCircuit_->isObservablePpoIndex(ppoIndex))
+		if (pCircuit_->isObservablePpoGateId(pGate->gateId_))
 		{
 			gateID_to_xPathStatus_[pGate->gateId_] = XPATH_EXIST;
 			return true;
@@ -4733,8 +4730,7 @@ void Atpg::calSCOAP()
 				break;
 			case Gate::PPO:
 			{
-				const int ppoIndex = gateID - (pCircuit_->totalGate_ - pCircuit_->numPPI_);
-				gate.co_ = pCircuit_->isObservablePpoIndex(ppoIndex) ? 0 : INFINITE / 4;
+				gate.co_ = pCircuit_->isObservablePpoGateId(gateID) ? 0 : INFINITE / 4;
 				break;
 			}
 			case Gate::PPI:
