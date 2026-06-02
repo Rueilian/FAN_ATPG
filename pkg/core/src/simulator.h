@@ -81,7 +81,7 @@ namespace CoreNs
 			: pCircuit_(pCircuit),
 				numDetection_(1),
 				numRecover_(0),
-				events_(pCircuit->totalLvl_),
+				events_(0),
 				processed_(pCircuit->totalGate_, 0),
 				recoverGates_(pCircuit->totalGate_),
 				faultInjectLow_(pCircuit->totalGate_, std::array<ParallelValue, 5>({0, 0, 0, 0, 0})),
@@ -89,6 +89,13 @@ namespace CoreNs
 				numInjectedFaults_(0),
 				activated_(PARA_L)
 	{
+		int maxGateLevel = 0;
+		for (int g = 0; g < pCircuit_->circuitGates_.size(); ++g)
+		{
+			if (pCircuit_->circuitGates_[g].numLevel_ > maxGateLevel)
+				maxGateLevel = pCircuit_->circuitGates_[g].numLevel_;
+		}
+		events_.resize(maxGateLevel + 1);
 	}
 
 	// **************************************************************************

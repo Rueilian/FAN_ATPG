@@ -30,6 +30,7 @@ public:
         cir            = NULL;
         sim            = NULL;
         atpg           = NULL;
+        perTargetTimeout_ = 0.0;
         atpgStat.rTime = 0;
     }
     ~FanMgr() {}
@@ -41,6 +42,7 @@ public:
     CoreNs::Circuit     *cir;
     CoreNs::Simulator   *sim;
     CoreNs::Atpg        *atpg;
+    double               perTargetTimeout_;  // stored per-target timeout until Atpg is created
     CommonNs::TmUsage   tmusg;
     CommonNs::TmStat    atpgStat;
     // Cell names of FFs declared as non-scan (set by set_nonscan_ff before build_circuit).

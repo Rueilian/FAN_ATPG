@@ -206,6 +206,28 @@ void initCmd(CmdMgr &cmdMgr, FanMgr &fanMgr)
 	Cmd *setDynamicCompressionCmd = new SetDynamicCompressionCmd("set_dynamic_compression", &fanMgr);
 	Cmd *setXFillCmd = new SetXFillCmd("set_X-Fill", &fanMgr);
 	Cmd *setNonscanFfCmd = new SetNonscanFfCmd("set_nonscan_ff", &fanMgr);
+
+	// set_per_target_timeout <seconds>
+	class SetPerTargetTimeoutCmd : public CommonNs::Cmd {
+	public:
+		SetPerTargetTimeoutCmd(const std::string &name, FanMgr *fm) : Cmd(name) { fm_ = fm; }
+		bool exec(const std::vector<std::string> &argv) override {
+			if (argv.size() < 2) { std::cerr << "**ERROR usage: set_per_target_timeout <seconds>\n"; return false; }
+			double sec;
+			try { sec = std::stod(argv[1]); }
+			catch (...) { std::cerr << "**ERROR invalid timeout value: " << argv[1] << "\n"; return false; }
+			if (!fm_->atpg) {
+				fm_->perTargetTimeout_ = sec;
+			} else {
+				fm_->atpg->setPerTargetTimeoutSec(sec);
+			}
+			std::cout << "#  per-target timeout set to " << sec << " s\n";
+			return true;
+		}
+	private: FanMgr *fm_;
+	};
+	Cmd *setPerTargetTimeoutCmd = new SetPerTargetTimeoutCmd("set_per_target_timeout", &fanMgr);
+
 	cmdMgr.regCmd("SETUP", readLibCmd);
 	cmdMgr.regCmd("SETUP", readNlCmd);
 	cmdMgr.regCmd("SETUP", setFaultTypeCmd);
@@ -218,6 +240,7 @@ void initCmd(CmdMgr &cmdMgr, FanMgr &fanMgr)
 	cmdMgr.regCmd("SETUP", setDynamicCompressionCmd);
 	cmdMgr.regCmd("SETUP", setXFillCmd);
 	cmdMgr.regCmd("SETUP", setNonscanFfCmd);
+	cmdMgr.regCmd("SETUP", setPerTargetTimeoutCmd);
 
 	// ATPG commands
 	Cmd *readPatCmd = new ReadPatCmd("read_pattern", &fanMgr);

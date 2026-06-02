@@ -7,6 +7,7 @@
 
 #include "atpg.h"
 #include <algorithm>
+#include <chrono>
 
 using namespace CoreNs;
 
@@ -547,6 +548,11 @@ void Atpg::TransitionDelayFaultATPG(FaultPtrList &faultPtrListForGen, PatternPro
 		numOfAtpgUntestableFaults += faultPtrListForGen.front()->equivalent_;
 		faultPtrListForGen.pop_front();
 	}
+	else if (result == TIMEOUT)
+	{
+		faultPtrListForGen.front()->faultState_ = Fault::TO;
+		faultPtrListForGen.pop_front();
+	}
 	else
 	{
 		faultPtrListForGen.front()->faultState_ = Fault::AB;
@@ -728,6 +734,11 @@ void Atpg::StuckAtFaultATPG(FaultPtrList &faultPtrListForGen, PatternProcessor *
 	{
 		faultPtrListForGen.front()->faultState_ = Fault::AU;
 		numOfAtpgUntestableFaults += faultPtrListForGen.front()->equivalent_;
+		faultPtrListForGen.pop_front();
+	}
+	else if (result == TIMEOUT)
+	{
+		faultPtrListForGen.front()->faultState_ = Fault::TO;
 		faultPtrListForGen.pop_front();
 	}
 	else
@@ -1054,8 +1065,24 @@ Atpg::SINGLE_PATTERN_GENERATION_STATUS Atpg::generateSinglePatternOnTargetFault(
 	// SET BACKTRACE FLAG
 	backtraceFlag = INITIAL;
 
+	// per-target-fault wall-clock timeout
+	const bool usePerTargetTimeout = (perTargetTimeoutSec_ > 0.0);
+	const auto tStart = std::chrono::steady_clock::now();
+
 	while (!Finish)
 	{
+		// Check per-target timeout
+		if (usePerTargetTimeout)
+		{
+			auto elapsed = std::chrono::duration<double>(std::chrono::steady_clock::now() - tStart).count();
+			if (elapsed > perTargetTimeoutSec_)
+			{
+				genStatus = TIMEOUT;
+				Finish = true;
+				continue;
+			}
+		}
+
 		if (!doImplication(implicationStatus, backwardImplicationLevel))
 		{
 			// implication INCONSISTENCY

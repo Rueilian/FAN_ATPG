@@ -151,22 +151,20 @@ bool Netlist::check(const bool &verbose) const
 		}
 		if (!hasIn)
 		{
-			res = false;
 			if (verbose)
 			{
-				fprintf(stderr, "**ERROR Netlist::check(): net ");
+				fprintf(stderr, "**WARN Netlist::check(): net ");
 				fprintf(stderr, "`%s/%s' ", top_->name_, n->name_);
-				fprintf(stderr, "has no driver\n");
+				fprintf(stderr, "has no driver (ignored)\n");
 			}
 		}
 		if (!hasOut)
 		{
-			res = false;
 			if (verbose)
 			{
-				fprintf(stderr, "**ERROR Netlist::check(): net ");
+				fprintf(stderr, "**WARN Netlist::check(): net ");
 				fprintf(stderr, "`%s/%s' ", top_->name_, n->name_);
-				fprintf(stderr, "drives no cell\n");
+				fprintf(stderr, "drives no cell (ignored)\n");
 			}
 		}
 	}

@@ -55,7 +55,8 @@ namespace CoreNs
 			AU,
 			TI,
 			RE,
-			AB
+			AB,
+			TO   // per-target-fault timeout
 		};
 
 		Fault();

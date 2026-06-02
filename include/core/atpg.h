@@ -34,7 +34,8 @@ namespace CoreNs
 		{
 			PATTERN_FOUND = 0,
 			FAULT_UNTESTABLE,
-			ABORT
+			ABORT,
+			TIMEOUT    // per-target-fault wall-clock timeout
 		};
 		enum GATE_LINE_TYPE
 		{
@@ -70,8 +71,11 @@ namespace CoreNs
 		// class Atpg main method
 		void generatePatternSet(PatternProcessor *pPatternProcessor, FaultListExtract *pFaultListExtractor, bool isMFO);
 		void calSCOAP();																					// exposed for external use (ScanForge)
+		inline void setPerTargetTimeoutSec(double sec) { perTargetTimeoutSec_ = sec; }
+		inline double perTargetTimeoutSec() const { return perTargetTimeoutSec_; }
 
 	private:
+		double perTargetTimeoutSec_ = 0.0;                           // per-target-fault wall-clock timeout in seconds; 0=disabled
 		Circuit *pCircuit_;																				// the circuit built on read verilog
 		Simulator *pSimulator_;																		// the simulator based on the built circuit
 		Fault currentTargetFault_;																// current target fault for generateSinglePatternOnTargetFault
@@ -224,8 +228,16 @@ namespace CoreNs
 				gateID_to_lineType_(pCircuit->totalGate_, FREE_LINE),
 				gateID_to_xPathStatus_(pCircuit->totalGate_),
 				gateID_to_uniquePath_(pCircuit->totalGate_, std::vector<int>()),
-				circuitLevel_to_EventStack_(pCircuit->totalLvl_)
+				circuitLevel_to_EventStack_(0)
 	{
+		int maxGateLevel = 0;
+		for (int g = 0; g < pCircuit_->circuitGates_.size(); ++g)
+		{
+			if (pCircuit_->circuitGates_[g].numLevel_ > maxGateLevel)
+				maxGateLevel = pCircuit_->circuitGates_[g].numLevel_;
+		}
+		circuitLevel_to_EventStack_.resize(maxGateLevel + 1);
+
 		initialObjectives_.reserve(MAX_LIST_SIZE);
 		currentObjectives_.reserve(MAX_LIST_SIZE);
 		fanoutObjectives_.reserve(MAX_LIST_SIZE);
@@ -780,6 +792,26 @@ namespace CoreNs
 				pattern.PPI_[i] = pCircuit_->circuitGates_[pCircuit_->numPI_ + i].atpgVal_;
 			}
 		}
+		// Per-frame scan-FF PPI. In PARTIAL_SEQUENTIAL the scan PPIs are free at every
+		// frame, so capture each frame's assignment; non-scan FFs stay X (their state
+		// is carried structurally by previous-frame PPO -> BUF, not by the pattern).
+		pattern.PPIFrames_.resize(pCircuit_->numFrame_);
+		for (int frame = 0; frame < pCircuit_->numFrame_; ++frame)
+		{
+			pattern.PPIFrames_[frame].resize(pCircuit_->numPPI_);
+			for (int i = 0; i < pCircuit_->numPPI_; ++i)
+			{
+				if (!pCircuit_->isPpiNonscan_.empty() && pCircuit_->isPpiNonscan_[i])
+				{
+					pattern.PPIFrames_[frame][i] = X;
+				}
+				else
+				{
+					pattern.PPIFrames_[frame][i] =
+						pCircuit_->circuitGates_[pCircuit_->numPI_ + i + frame * pCircuit_->numGate_].atpgVal_;
+				}
+			}
+		}
 		// if (pattern.SI_ != NULL && pCircuit_->numFrame_ > 1)
 		if (!(pattern.SI_.empty()) && pCircuit_->numFrame_ > 1)
 		{
@@ -819,13 +851,16 @@ namespace CoreNs
 
 		if (!(pattern.PO2_.empty()) && pCircuit_->numFrame_ > 1)
 		{
+			// Capture the response from the final observation frame, not a hardcoded
+			// frame 1 (correct for T>2 multi-frame unrolling).
+			const int finalFrameOffset = (pCircuit_->numFrame_ - 1) * pCircuit_->numGate_;
 			for (int i = 0; i < pCircuit_->numPO_; ++i)
 			{
-				if (pCircuit_->circuitGates_[offset + i + pCircuit_->numGate_].goodSimLow_ == PARA_H)
+				if (pCircuit_->circuitGates_[offset + i + finalFrameOffset].goodSimLow_ == PARA_H)
 				{
 					pattern.PO2_[i] = L;
 				}
-				else if (pCircuit_->circuitGates_[offset + i + pCircuit_->numGate_].goodSimHigh_ == PARA_H)
+				else if (pCircuit_->circuitGates_[offset + i + finalFrameOffset].goodSimHigh_ == PARA_H)
 				{
 					pattern.PO2_[i] = H;
 				}
@@ -836,15 +871,21 @@ namespace CoreNs
 			}
 		}
 
+		// PPO response is observed at the final frame. Non-scan FF PPOs are not scan
+		// observation endpoints, so they must not be reported as a measurable response.
 		offset = pCircuit_->numGate_ - pCircuit_->numPPI_;
 		if (pCircuit_->numFrame_ > 1)
 		{
-			offset += pCircuit_->numGate_;
+			offset += (pCircuit_->numFrame_ - 1) * pCircuit_->numGate_;
 		}
 
 		for (int i = 0; i < pCircuit_->numPPI_; ++i)
 		{
-			if (pCircuit_->circuitGates_[offset + i].goodSimLow_ == PARA_H)
+			if (!pCircuit_->isPpiNonscan_.empty() && pCircuit_->isPpiNonscan_[i])
+			{
+				pattern.PPO_[i] = X;
+			}
+			else if (pCircuit_->circuitGates_[offset + i].goodSimLow_ == PARA_H)
 			{
 				pattern.PPO_[i] = L;
 			}
@@ -1102,7 +1143,7 @@ namespace CoreNs
 			}
 		}
 
-		if (!(pCircuit_->isPpiNonscan_.empty() && pCircuit_->isPpiNonscan_[0]) &&
+		if ((pCircuit_->isPpiNonscan_.empty() || !pCircuit_->isPpiNonscan_[0]) &&
 		    pattern.PPI_[0] == X)
 		{
 			pattern.PPI_[0] = pattern.PI1_[pCircuit_->numPI_ - 1];

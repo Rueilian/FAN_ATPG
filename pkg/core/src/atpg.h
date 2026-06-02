@@ -34,7 +34,8 @@ namespace CoreNs
 		{
 			PATTERN_FOUND = 0,
 			FAULT_UNTESTABLE,
-			ABORT
+			ABORT,
+			TIMEOUT    // per-target-fault wall-clock timeout
 		};
 		enum GATE_LINE_TYPE
 		{
@@ -70,8 +71,11 @@ namespace CoreNs
 		// class Atpg main method
 		void generatePatternSet(PatternProcessor *pPatternProcessor, FaultListExtract *pFaultListExtractor, bool isMFO);
 		void calSCOAP();																					// exposed for external use (ScanForge)
+		inline void setPerTargetTimeoutSec(double sec) { perTargetTimeoutSec_ = sec; }
+		inline double perTargetTimeoutSec() const { return perTargetTimeoutSec_; }
 
 	private:
+		double perTargetTimeoutSec_ = 0.0;                           // per-target-fault wall-clock timeout in seconds; 0=disabled
 		Circuit *pCircuit_;																				// the circuit built on read verilog
 		Simulator *pSimulator_;																		// the simulator based on the built circuit
 		Fault currentTargetFault_;																// current target fault for generateSinglePatternOnTargetFault
@@ -224,8 +228,16 @@ namespace CoreNs
 				gateID_to_lineType_(pCircuit->totalGate_, FREE_LINE),
 				gateID_to_xPathStatus_(pCircuit->totalGate_),
 				gateID_to_uniquePath_(pCircuit->totalGate_, std::vector<int>()),
-				circuitLevel_to_EventStack_(pCircuit->totalLvl_)
+				circuitLevel_to_EventStack_(0)
 	{
+		int maxGateLevel = 0;
+		for (int g = 0; g < pCircuit_->circuitGates_.size(); ++g)
+		{
+			if (pCircuit_->circuitGates_[g].numLevel_ > maxGateLevel)
+				maxGateLevel = pCircuit_->circuitGates_[g].numLevel_;
+		}
+		circuitLevel_to_EventStack_.resize(maxGateLevel + 1);
+
 		initialObjectives_.reserve(MAX_LIST_SIZE);
 		currentObjectives_.reserve(MAX_LIST_SIZE);
 		fanoutObjectives_.reserve(MAX_LIST_SIZE);

@@ -278,8 +278,16 @@ bool AddFaultCmd::exec(const std::vector<std::string> &argv)
 
 	fanMgr_->fListExtract->extractFaultFromCircuit(fanMgr_->cir);
 
+	// load faults from file
+	if (optMgr_.isFlagSet("f"))
+	{
+		if (!loadFaultList(optMgr_.getFlagVar("f")))
+		{
+			return false;
+		}
+	}
 	// add all faults
-	if (optMgr_.isFlagSet("a"))
+	else if (optMgr_.isFlagSet("a"))
 	{
 		addAllFault();
 	}
@@ -351,6 +359,47 @@ void AddFaultCmd::addAllFault()
 	std::cout << "#  Finished building fault list";
 	std::cout << "    " << (double)stat.rTime / 1000000.0 << " s";
 	std::cout << "    " << (double)stat.vmSize / 1024.0 << " MB\n";
+}
+
+bool AddFaultCmd::loadFaultList(const std::string &filepath)
+{
+	if (!fanMgr_->fListExtract || fanMgr_->fListExtract->extractedFaults_.empty())
+	{
+		std::cerr << "**ERROR loadFaultList(): no extracted faults. Run add_fault --all first.\n";
+		return false;
+	}
+
+	std::ifstream infile(filepath.c_str());
+	if (!infile.is_open())
+	{
+		std::cerr << "**ERROR loadFaultList(): cannot open " << filepath << "\n";
+		return false;
+	}
+
+	fanMgr_->fListExtract->faultsInCircuit_.clear();
+
+	int gateID, faultyLine;
+	std::string faultTypeStr;
+	int matched = 0, missed = 0;
+	while (infile >> gateID >> faultTypeStr >> faultyLine)
+	{
+		CoreNs::Fault::FAULT_TYPE ft = (faultTypeStr == "SA0") ? CoreNs::Fault::SA0 : CoreNs::Fault::SA1;
+		CoreNs::Fault *pFault = findMatchingFault(gateID, ft, faultyLine);
+		if (pFault)
+		{
+			fanMgr_->fListExtract->faultsInCircuit_.push_back(pFault);
+			++matched;
+		}
+		else
+		{
+			++missed;
+		}
+	}
+
+	std::cout << "#  Loaded " << matched << " faults";
+	if (missed > 0) std::cout << ", " << missed << " not found";
+	std::cout << " from " << filepath << "\n";
+	return true;
 }
 
 Fault *AddFaultCmd::findMatchingFault(int gateID, Fault::FAULT_TYPE faultType, int faultyLine) const
@@ -556,11 +605,11 @@ bool ReportFaultCmd::exec(const std::vector<std::string> &argv)
 	FaultPtrListIter it = fanMgr_->fListExtract->faultsInCircuit_.begin();
 	for (; it != fanMgr_->fListExtract->faultsInCircuit_.end(); ++it)
 	{
-		if (!stateSet || (*it)->faultState_ != state)
+		if (stateSet && (*it)->faultState_ != state)
 		{
 			continue;
 		}
-		std::cout << "#    ";
+		std::cout << "#    g=" << (*it)->gateID_ << " l=" << (*it)->faultyLine_ << " "; 
 		switch ((*it)->faultType_)
 		{
 			case Fault::SA0:
@@ -601,6 +650,9 @@ bool ReportFaultCmd::exec(const std::vector<std::string> &argv)
 				break;
 			case Fault::AB:
 				std::cout << " AB     ";
+				break;
+			case Fault::TO:
+				std::cout << " TO     ";
 				break;
 		}
 		int cid = fanMgr_->cir->circuitGates_[(*it)->gateID_].cellId_;
@@ -733,6 +785,10 @@ bool ReportFaultCmd::exec(const std::vector<std::string> &argv)
 			if (p)
 			{
 				std::cout << c->name_ << "/" << p->name_ << " ";
+			}
+			else
+			{
+				std::cout << c->name_ << " ";
 			}
 			std::cout << "(" << libc->name_ << ")";
 		}
@@ -1051,6 +1107,7 @@ bool ReportStatsCmd::exec(const std::vector<std::string> &argv)
 	size_t ti = 0;
 	size_t re = 0;
 	size_t ab = 0;
+	size_t to = 0;
 
 	FaultPtrListIter it = fanMgr_->fListExtract->faultsInCircuit_.begin();
 	for (; it != fanMgr_->fListExtract->faultsInCircuit_.end(); ++it)
@@ -1081,11 +1138,14 @@ bool ReportStatsCmd::exec(const std::vector<std::string> &argv)
 			case Fault::AB:
 				ab += eq;
 				break;
+			case Fault::TO:
+				to += eq;
+				break;
 		}
 	}
 
 	float fc = (float)dt / (float)fu * 100;
-	float tc = (float)dt / (float)(ud + dt + pt + ab) * 100;
+	float tc = (float)dt / (float)(ud + dt + pt + ab + to) * 100;
 	float ae = (float)(dt + au + ti + re) / (float)fu * 100;
 
 	std::cout << std::right;
@@ -1106,6 +1166,7 @@ bool ReportStatsCmd::exec(const std::vector<std::string> &argv)
 	std::cout << "#    AU (atpg untestable)        " << std::setw(19) << au << "\n";
 	std::cout << "#    RE (redundant)              " << std::setw(19) << re << "\n";
 	std::cout << "#    AB (atpg abort)             " << std::setw(19) << ab << "\n";
+	std::cout << "#    TO (timeout)                " << std::setw(19) << to << "\n";
 	std::cout << "#    TI (tied)                   " << std::setw(19) << ti << "\n";
 	std::cout << "#    --------------------------  -------------------\n";
 	std::cout << "#    DT (detected)               " << std::setw(19) << dt << "\n";
@@ -1373,6 +1434,8 @@ bool RunAtpgCmd::exec(const std::vector<std::string> &argv)
 
 	delete fanMgr_->atpg;
 	fanMgr_->atpg = new Atpg(fanMgr_->cir, fanMgr_->sim);
+	if (fanMgr_->perTargetTimeout_ > 0.0)
+		fanMgr_->atpg->setPerTargetTimeoutSec(fanMgr_->perTargetTimeout_);
 
 	std::cout << "#  Performing pattern generation ...\n";
 	fanMgr_->tmusg.periodStart();
