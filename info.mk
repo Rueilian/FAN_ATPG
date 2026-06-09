@@ -45,7 +45,8 @@ interface_EXE = mdt_test.cpp     \
 				lht_pat_test.cpp \
 				vlog2pmt.cpp
 
-core_EXE = phase_c_test.cpp
+core_EXE = phase_c_test.cpp \
+           phase_d_test.cpp
 
 fan_EXE = main.cpp
 
@@ -54,6 +55,7 @@ fan_EXE = main.cpp
 # 		                                  // into Hello
 
 phase_c_test.cpp_core_BIN = phase_c_test
+phase_d_test.cpp_core_BIN = phase_d_test
 
 main.cpp_fan_BIN = fan
 

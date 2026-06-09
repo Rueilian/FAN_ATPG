@@ -5,10 +5,33 @@
 // Date       [ 2011/07/05 created ]
 // **************************************************************************
 
+#include <cstring>
+
 #include "circuit.h"
 
 using namespace IntfNs;
 using namespace CoreNs;
+
+namespace
+{
+bool isMux2LibCell(const Cell *cell)
+{
+	return cell && cell->libc_ &&
+	       (!strcmp(cell->libc_->name_, "MUX2_X1") ||
+	        !strcmp(cell->libc_->name_, "MUX2_X2"));
+}
+
+int combOutputGateId(Circuit *cir, Techlib *techlib, Cell *driverCell, const int outLibPortId)
+{
+	int gateId = cir->cellIndexToGateIndex_[driverCell->id_];
+	if (techlib->hasPmt(driverCell->libc_->id_, Pmt::DFF) || isMux2LibCell(driverCell))
+	{
+		return gateId;
+	}
+	gateId += (*(driverCell->libc_->getPortCells(outLibPortId).begin()))->id_;
+	return gateId;
+}
+}
 
 // **************************************************************************
 // Function   [ Circuit::buildCircuit ]
@@ -158,6 +181,10 @@ void Circuit::calculateNumGate()
 		{
 			++numPPI_;
 			++numGate_;
+		}
+		else if (isMux2LibCell(top->getCell(i)))
+		{
+			numGate_ += 1;
 		}
 		else
 		{
@@ -403,6 +430,12 @@ void Circuit::createCircuitComb()
 	for (int i = numPPI_; i < (int)top->getNCell(); ++i)
 	{
 		Cell *cellInTop = top->getCell(i);
+		if (isMux2LibCell(cellInTop))
+		{
+			int muxGateID = cellIndexToGateIndex_[i];
+			createCircuitMux2(muxGateID, cellInTop);
+			continue;
+		}
 		for (int j = 0; j < (int)cellInTop->libc_->getNCell(); ++j)
 		{
 			int combGateID = cellIndexToGateIndex_[i] + j;
@@ -418,6 +451,59 @@ void Circuit::createCircuitComb()
 	{
 		circuitLvl_ = circuitGates_[cellIndexToGateIndex_[top->getNCell() - 1]].numLevel_ + 2;
 	}
+}
+
+// **************************************************************************
+// Function   [ Circuit::createCircuitMux2 ]
+// Commenter  [ Phase D ]
+// Synopsis   [ Build MUX2_X1/MUX2_X2 as a single Gate::MUX (A,B,S). ]
+// **************************************************************************
+void Circuit::createCircuitMux2(const int &gateID, Cell *const cell)
+{
+	Cell *top = pNetlist_->getTop();
+	Techlib *techlib = pNetlist_->getTechlib();
+
+	circuitGates_[gateID].gateId_ = gateID;
+	circuitGates_[gateID].cellId_ = cell->id_;
+	circuitGates_[gateID].primitiveId_ = 0;
+	circuitGates_[gateID].gateType_ = Gate::MUX;
+
+	static const char *kInPorts[] = {"A", "B", "S"};
+	int maxLvl = -1;
+	for (int k = 0; k < 3; ++k)
+	{
+		Port *inPort = cell->getPort(kInPorts[k]);
+		Net *nex = cell->getPort(inPort->id_)->exNet_;
+		int faninID = -1;
+		PortSet ps = top->getNetPorts(nex->id_);
+		for (PortSet::iterator it = ps.begin(); it != ps.end(); ++it)
+		{
+			Cell *cin = (*it)->top_;
+			if ((*it)->type_ == Port::OUTPUT && cin != top)
+			{
+				faninID = combOutputGateId(this, techlib, cin, (*it)->id_);
+				break;
+			}
+			if ((*it)->type_ == Port::INPUT && cin == top)
+			{
+				faninID = portIndexToGateIndex_[(*it)->id_];
+				break;
+			}
+		}
+		if (faninID < 0)
+		{
+			continue;
+		}
+		circuitGates_[gateID].faninVector_.push_back(faninID);
+		++circuitGates_[gateID].numFI_;
+		circuitGates_[faninID].fanoutVector_.push_back(gateID);
+		++circuitGates_[faninID].numFO_;
+		if (circuitGates_[faninID].numLevel_ > maxLvl)
+		{
+			maxLvl = circuitGates_[faninID].numLevel_;
+		}
+	}
+	circuitGates_[gateID].numLevel_ = maxLvl + 1;
 }
 
 // **************************************************************************
@@ -477,13 +563,7 @@ void Circuit::createCircuitPmt(const int &gateID, const Cell *const cell,
 					Cell *cin = (*it)->top_;
 					if ((*it)->type_ == Port::OUTPUT && cin != cell->top_)
 					{
-						CellSet cs = cin->libc_->getPortCells((*it)->id_);
-						faninID = cellIndexToGateIndex_[cin->id_];
-						if (pNetlist_->getTechlib()->hasPmt(cin->libc_->id_, Pmt::DFF)) // NE
-						{
-							break;
-						}
-						faninID += (*cs.begin())->id_;
+						faninID = combOutputGateId(this, pNetlist_->getTechlib(), cin, (*it)->id_);
 						break;
 					}
 					else if ((*it)->type_ == Port::INPUT && cin == cell->top_)
@@ -726,12 +806,7 @@ void Circuit::createCircuitPO()
 			}
 			else if ((*it)->top_ != top && (*it)->type_ == Port::OUTPUT)
 			{
-				faninID = cellIndexToGateIndex_[(*it)->top_->id_];
-				Cell *libc = (*it)->top_->libc_;
-				if (!pNetlist_->getTechlib()->hasPmt(libc->id_, Pmt::DFF)) // NE
-				{
-					faninID += (*libc->getPortCells((*it)->id_).begin())->id_;
-				}
+				faninID = combOutputGateId(this, pNetlist_->getTechlib(), (*it)->top_, (*it)->id_);
 			}
 			else
 			{
@@ -789,12 +864,7 @@ void Circuit::createCircuitPPO()
 			}
 			else if ((*it)->top_ != top && (*it)->type_ == Port::OUTPUT)
 			{
-				faninID = cellIndexToGateIndex_[(*it)->top_->id_];
-				Cell *libc = (*it)->top_->libc_;
-				if (!pNetlist_->getTechlib()->hasPmt(libc->id_, Pmt::DFF)) // NE
-				{
-					faninID += (*libc->getPortCells((*it)->id_).begin())->id_;
-				}
+				faninID = combOutputGateId(this, pNetlist_->getTechlib(), (*it)->top_, (*it)->id_);
 			}
 			else
 			{

@@ -19,7 +19,7 @@
 
 namespace CoreNs
 {
-	constexpr int BACKTRACK_LIMIT = 500;
+	constexpr int BACKTRACK_LIMIT = 5000;
 	constexpr int INFINITE = 0x7fffffff;
 	constexpr int MAX_LIST_SIZE = 1000;
 	constexpr int NO_UNIQUE_PATH = -1;

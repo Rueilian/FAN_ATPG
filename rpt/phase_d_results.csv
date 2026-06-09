@@ -1,0 +1,6 @@
+circuit,change,fc_pct,au,dt,collapsed,patterns,notes
+b03,phase_c_baseline,34.75,948,538,1112,12,PO/PPO fix only
+b03,phase_d_mux2_atomic_fan,75.39,189,769,881,6,b03_fs.script with compression
+b03,phase_d_mux2_atomic_cpp,80.14,113,706,881,-,phase_d_test with compression
+s510,phase_d_mux2_atomic,99.14,0,,-,-,no regression
+tiny_sdffr,phase_d_mux2_atomic,91.67,0,22,24,-,phase_c regression pass

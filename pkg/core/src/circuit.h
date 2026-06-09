@@ -77,6 +77,7 @@ namespace CoreNs
 		void createCircuitScanPorts();
 		void createCircuitPPI();
 		void createCircuitComb();
+		void createCircuitMux2(const int &gateID, IntfNs::Cell *const cell);
 		void createCircuitPmt(const int &gateID, const IntfNs::Cell *const cell,
 		                      const IntfNs::Pmt *const pmt);
 		void determineGateType(const int &gateID, const IntfNs::Cell *const cell,
