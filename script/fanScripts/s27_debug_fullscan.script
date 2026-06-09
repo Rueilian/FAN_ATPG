@@ -1,0 +1,11 @@
+read_lib techlib/mod_nangate45.mdt
+read_netlist mod_netlist/s27.v
+build_circuit --frame 1
+set_fault_type saf
+add_fault --all
+set_static_compression on
+set_dynamic_compression on
+run_atpg
+report_statistics > rpt/s27_debug_fullscan.rpt
+report_circuit
+exit

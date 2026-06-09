@@ -1,0 +1,10 @@
+read_lib techlib/mod_nangate45.mdt
+read_netlist mod_netlist/tiny_sdff.v
+build_circuit --frame 1
+set_fault_type saf
+add_fault --all
+run_atpg
+report_statistics > rpt/tiny_sdff_atpg.rpt
+report_fault -s AU > rpt/tiny_sdff_au.rpt
+report_fault -s DT > rpt/tiny_sdff_dt.rpt
+exit

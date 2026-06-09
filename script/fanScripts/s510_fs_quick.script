@@ -1,0 +1,8 @@
+read_lib techlib/mod_nangate45.mdt
+read_netlist mod_netlist/s510.v
+build_circuit --frame 1
+set_fault_type saf
+add_fault --all
+run_atpg
+report_statistics > rpt/s510_fs_quick.rpt
+exit

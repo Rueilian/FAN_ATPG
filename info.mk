@@ -45,11 +45,15 @@ interface_EXE = mdt_test.cpp     \
 				lht_pat_test.cpp \
 				vlog2pmt.cpp
 
+core_EXE = phase_c_test.cpp
+
 fan_EXE = main.cpp
 
 # To specify binary names
 # 		 hello.cpp_test1_BIN = Hello      // hello.cpp in test1 will be built
 # 		                                  // into Hello
+
+phase_c_test.cpp_core_BIN = phase_c_test
 
 main.cpp_fan_BIN = fan
 

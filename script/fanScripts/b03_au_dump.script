@@ -1,0 +1,9 @@
+read_lib techlib/mod_nangate45.mdt
+read_netlist mod_netlist/b03.v
+build_circuit --frame 1
+set_fault_type saf
+add_fault --all
+run_atpg
+report_fault -s AU > rpt/b03_au_post_c.rpt
+report_fault -s DT > rpt/b03_dt_post_c.rpt
+exit

@@ -2293,23 +2293,30 @@ void Atpg::updateDFrontiers()
 // **************************************************************************
 bool Atpg::checkIfFaultHasPropagatedToPO(bool &faultHasPropagatedToPO)
 {
-	// see if there is any D or B at PO/PPO?
-	// i.e. The fault has propagated to the PO/PPO
-	for (int i = 0; i < pCircuit_->numPO_ + pCircuit_->numPPI_; ++i)
+	// Scan pseudo gates (CK/test_si/test_se) sit at the array tail after PPO.
+	// Indexing from totalGate_-i-1 therefore misses real PO/PPO on small designs.
+	for (int gateID = 0; gateID < pCircuit_->totalGate_; ++gateID)
 	{
-		if (i < pCircuit_->numPPI_)
+		const Gate &gate = pCircuit_->circuitGates_[gateID];
+		if (gate.gateType_ == Gate::PO)
 		{
-			const int outputGateId = pCircuit_->totalGate_ - i - 1;
-			if (!pCircuit_->isObservablePpoGateId(outputGateId))
+			if (gate.atpgVal_ == D || gate.atpgVal_ == B)
+			{
+				faultHasPropagatedToPO = true;
+				return true;
+			}
+		}
+		else if (gate.gateType_ == Gate::PPO)
+		{
+			if (!pCircuit_->isObservablePpoGateId(gateID))
 			{
 				continue;
 			}
-		}
-		const Value &v = pCircuit_->circuitGates_[pCircuit_->totalGate_ - i - 1].atpgVal_;
-		if (v == D || v == B)
-		{
-			faultHasPropagatedToPO = true;
-			return true;
+			if (gate.atpgVal_ == D || gate.atpgVal_ == B)
+			{
+				faultHasPropagatedToPO = true;
+				return true;
+			}
 		}
 	}
 	faultHasPropagatedToPO = false;
