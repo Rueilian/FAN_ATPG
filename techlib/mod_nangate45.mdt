@@ -663,18 +663,9 @@ model DFFRS_X1
   input (D) ( )
   input (RN) ( )
   input (SN) ( )
-  output (Q) ()
-  output (QN) (
-    instance = seq3_1  mlc_inst9 ( IQ, SN, RN, nextstate, CK, NOTIFIER );
-    primitive = _and  mlc_and_1 ( i_15, i_16, IQN );
-    primitive = _inv  mlc_inv_1 ( IQ, i_15 );
-    primitive = _inv  mlc_inv_2 ( i_17, i_16 );
-    primitive = _and  mlc_and_2 ( i_18, i_19, i_17 );
-    primitive = _inv  mlc_inv_3 ( SN, i_18 );
-    primitive = _inv  mlc_inv_4 ( RN, i_19 );
-    primitive = _buf  mlc_buf_1 ( IQ, Q );
-    primitive = _buf  mlc_buf_2 ( IQN, QN );
-    primitive = _buf  mlc_buf_3 ( D, nextstate );
+  output (Q, QN) ()
+  intern(NN0) (
+    primitive = _dff  ID (SN,RN,CK,D,Q,QN);
   )
 )
 
@@ -686,18 +677,9 @@ model DFFRS_X2
   input (D) ( )
   input (RN) ( )
   input (SN) ( )
-  output (Q) ()
-  output (QN) (
-    instance = seq3_1  mlc_inst10 ( IQ, SN, RN, nextstate, CK, NOTIFIER );
-    primitive = _and  mlc_and_1 ( i_15, i_16, IQN );
-    primitive = _inv  mlc_inv_1 ( IQ, i_15 );
-    primitive = _inv  mlc_inv_2 ( i_17, i_16 );
-    primitive = _and  mlc_and_2 ( i_18, i_19, i_17 );
-    primitive = _inv  mlc_inv_3 ( SN, i_18 );
-    primitive = _inv  mlc_inv_4 ( RN, i_19 );
-    primitive = _buf  mlc_buf_1 ( IQ, Q );
-    primitive = _buf  mlc_buf_2 ( IQN, QN );
-    primitive = _buf  mlc_buf_3 ( D, nextstate );
+  output (Q, QN) ()
+  intern(NN0) (
+    primitive = _dff  ID (SN,RN,CK,D,Q,QN);
   )
 )
 
@@ -707,13 +689,9 @@ model DFFR_X1
   input (CK) ( )
   input (D) ( )
   input (RN) ( )
-  output (Q) ()
-  output (QN) (
-    instance = seq3_2  mlc_inst11 ( IQ, RN, nextstate, CK, NOTIFIER );
-    primitive = _inv  mlc_inv_1 ( IQ, IQN );
-    primitive = _buf  mlc_buf_1 ( IQ, Q );
-    primitive = _buf  mlc_buf_2 ( IQN, QN );
-    primitive = _buf  mlc_buf_3 ( D, nextstate );
+  output (Q, QN) ()
+  intern(NN0) (
+    primitive = _dff  ID (,RN,CK,D,Q,QN);
   )
 )
 
@@ -1597,16 +1575,10 @@ model SDFFR_X1
   input (RN) ( )
   input (SE) ( )
   input (SI) ( )
-  output (Q) ()
-  output (QN) (
-    instance = seq3_2  mlc_inst23 ( IQ, RN, nextstate, CK, NOTIFIER );
-    primitive = _inv  mlc_inv_1 ( IQ, IQN );
-    primitive = _buf  mlc_buf_1 ( IQ, Q );
-    primitive = _buf  mlc_buf_2 ( IQN, QN );
-    primitive = _or  mlc_or_1 ( i_18, i_19, nextstate );
-    primitive = _and  mlc_and_1 ( SE, SI, i_18 );
-    primitive = _and  mlc_and_2 ( D, i_20, i_19 );
-    primitive = _inv  mlc_inv_2 ( SE, i_20 );
+  output (Q, QN) ()
+  intern(NN0) (
+    primitive = _mux  IC (D,SI,SE,NN0);
+    primitive = _dff  ID (,RN,CK,NN0,Q,QN);
   )
 )
 
@@ -1641,16 +1613,10 @@ model SDFFS_X1
   input (SE) ( )
   input (SI) ( )
   input (SN) ( )
-  output (Q) ()
-  output (QN) (
-    instance = seq3_3  mlc_inst25 ( IQ, SN, nextstate, CK, NOTIFIER );
-    primitive = _inv  mlc_inv_1 ( IQ, IQN );
-    primitive = _buf  mlc_buf_1 ( IQ, Q );
-    primitive = _buf  mlc_buf_2 ( IQN, QN );
-    primitive = _or  mlc_or_1 ( i_18, i_19, nextstate );
-    primitive = _and  mlc_and_1 ( SE, SI, i_18 );
-    primitive = _and  mlc_and_2 ( D, i_20, i_19 );
-    primitive = _inv  mlc_inv_2 ( SE, i_20 );
+  output (Q, QN) ()
+  intern(NN0) (
+    primitive = _mux  IC (D,SI,SE,NN0);
+    primitive = _dff  ID (SN,,CK,NN0,Q,QN);
   )
 )
 

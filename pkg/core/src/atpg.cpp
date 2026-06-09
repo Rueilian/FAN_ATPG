@@ -886,7 +886,6 @@ int Atpg::storeCurrentAtpgVal()
 	if (numAssignedValueChanged != 0)
 	{
 		std::cerr << "Bug: storeCurrentAtpgVal detects the numAssignedValueChanged is not 0\n";
-		std::cin.get();
 	}
 	return numAssignedValueChanged;
 }
@@ -1849,6 +1848,63 @@ Atpg::IMPLICATION_STATUS Atpg::doOneGateBackwardImplication(Gate *pGate)
 			pushGateToEventStack(pGate->faninVector_[ImpPtr]);
 			pushGateFanoutsToEventStack(pGate->faninVector_[ImpPtr]);
 			implicationStatus = BACKWARD;
+		}
+		else
+		{
+			unjustifiedGateIDs_.push_back(pGate->gateId_);
+			implicationStatus = FORWARD;
+		}
+	}
+	else if (pGate->gateType_ == Gate::MUX)
+	{
+		if (pGate->numFI_ < 3)
+		{
+			unjustifiedGateIDs_.push_back(pGate->gateId_);
+			return FORWARD;
+		}
+		Gate *pA = &pCircuit_->circuitGates_[pGate->faninVector_[0]];
+		Gate *pB = &pCircuit_->circuitGates_[pGate->faninVector_[1]];
+		Gate *pS = &pCircuit_->circuitGates_[pGate->faninVector_[2]];
+		implicationStatus = BACKWARD;
+		if (pS->atpgVal_ == L)
+		{
+			if (pA->atpgVal_ == X && pGate->atpgVal_ != X)
+			{
+				if (isUncontrollableSource(pA))
+				{
+					return CONFLICT;
+				}
+				pA->atpgVal_ = pGate->atpgVal_;
+				gateID_to_valModified_[pGate->gateId_] = 1;
+				backtrackImplicatedGateIDs_.push_back(pA->gateId_);
+				pushGateToEventStack(pGate->faninVector_[0]);
+				pushGateFanoutsToEventStack(pGate->faninVector_[0]);
+			}
+			else if (pGate->atpgVal_ == X)
+			{
+				unjustifiedGateIDs_.push_back(pGate->gateId_);
+				implicationStatus = FORWARD;
+			}
+		}
+		else if (pS->atpgVal_ == H)
+		{
+			if (pB->atpgVal_ == X && pGate->atpgVal_ != X)
+			{
+				if (isUncontrollableSource(pB))
+				{
+					return CONFLICT;
+				}
+				pB->atpgVal_ = pGate->atpgVal_;
+				gateID_to_valModified_[pGate->gateId_] = 1;
+				backtrackImplicatedGateIDs_.push_back(pB->gateId_);
+				pushGateToEventStack(pGate->faninVector_[1]);
+				pushGateFanoutsToEventStack(pGate->faninVector_[1]);
+			}
+			else if (pGate->atpgVal_ == X)
+			{
+				unjustifiedGateIDs_.push_back(pGate->gateId_);
+				implicationStatus = FORWARD;
+			}
 		}
 		else
 		{
@@ -4554,25 +4610,13 @@ std::string Atpg::getValStr(Value val)
 // TODO comment by wang
 void Atpg::calSCOAP()
 {
-	// cc0, cc1 and co default is 0, check if is changed before
+	// Reset SCOAP fields (may be stale after ATPG).
 	for (int gateID = 0; gateID < pCircuit_->totalGate_; ++gateID)
 	{
 		Gate &gate = pCircuit_->circuitGates_[gateID];
-		if (gate.cc0_ != 0)
-		{
-			std::cerr << "cc0_ is not -1\n";
-			std::cin.get();
-		}
-		if (gate.cc1_ != 0)
-		{
-			std::cerr << "cc1_ is not -1\n";
-			std::cin.get();
-		}
-		if (gate.co_ != 0)
-		{
-			std::cerr << "co_ is not -1\n";
-			std::cin.get();
-		}
+		gate.cc0_ = 0;
+		gate.cc1_ = 0;
+		gate.co_ = 0;
 	}
 
 	// array for xor2, xor3, xnor2, xnor3
@@ -4599,15 +4643,40 @@ void Atpg::calSCOAP()
 				gate.cc0_ = INFINITE / 4;
 				gate.cc1_ = INFINITE / 4;
 				break;
+			case Gate::TIE0:
+				gate.cc0_ = 1;
+				gate.cc1_ = INFINITE / 4;
+				break;
+			case Gate::TIE1:
+				gate.cc0_ = INFINITE / 4;
+				gate.cc1_ = 1;
+				break;
+			case Gate::MUX:
+				// 2:1 MUX fanin order: A(0), B(1), S(2)
+				if (gate.numFI_ >= 3)
+				{
+					Gate &a = pCircuit_->circuitGates_[gate.faninVector_[0]];
+					Gate &b = pCircuit_->circuitGates_[gate.faninVector_[1]];
+					Gate &s = pCircuit_->circuitGates_[gate.faninVector_[2]];
+					gate.cc0_ = std::min(a.cc0_ + s.cc0_, b.cc0_ + s.cc1_) + 1;
+					gate.cc1_ = std::min(a.cc1_ + s.cc0_, b.cc1_ + s.cc1_) + 1;
+				}
+				break;
 			case Gate::PO:
 			case Gate::PPO:
 			case Gate::BUF:
-				gate.cc0_ = pCircuit_->circuitGates_[gate.faninVector_[0]].cc0_;
-				gate.cc1_ = pCircuit_->circuitGates_[gate.faninVector_[0]].cc1_;
+				if (gate.numFI_ > 0)
+				{
+					gate.cc0_ = pCircuit_->circuitGates_[gate.faninVector_[0]].cc0_;
+					gate.cc1_ = pCircuit_->circuitGates_[gate.faninVector_[0]].cc1_;
+				}
 				break;
 			case Gate::INV:
-				gate.cc0_ = pCircuit_->circuitGates_[gate.faninVector_[0]].cc1_ + 1;
-				gate.cc1_ = pCircuit_->circuitGates_[gate.faninVector_[0]].cc0_ + 1;
+				if (gate.numFI_ > 0)
+				{
+					gate.cc0_ = pCircuit_->circuitGates_[gate.faninVector_[0]].cc1_ + 1;
+					gate.cc1_ = pCircuit_->circuitGates_[gate.faninVector_[0]].cc0_ + 1;
+				}
 				break;
 			case Gate::AND2:
 			case Gate::AND3:
@@ -4739,9 +4808,15 @@ void Atpg::calSCOAP()
 				++gate.cc0_;
 				++gate.cc1_;
 				break;
+			case Gate::NA:
+				gate.cc0_ = INFINITE / 4;
+				gate.cc1_ = INFINITE / 4;
+				break;
 			default:
-				std::cerr << "Bug: reach switch case default while calculating cc0_, cc1_";
-				std::cin.get();
+				std::cerr << "Bug: reach switch case default while calculating cc0_, cc1_ for gate type "
+				          << gate.gateType_ << "\n";
+				gate.cc0_ = INFINITE / 4;
+				gate.cc1_ = INFINITE / 4;
 				break;
 		}
 	}
@@ -4763,6 +4838,8 @@ void Atpg::calSCOAP()
 			case Gate::PPI:
 			case Gate::PI:
 			case Gate::BUF:
+			case Gate::TIE0:
+			case Gate::TIE1:
 			case Gate::TIEX:
 			case Gate::TIEZ:
 				for (int j = 0; j < gate.numFO_; ++j)
@@ -4774,7 +4851,10 @@ void Atpg::calSCOAP()
 				}
 				break;
 			case Gate::INV:
-				gate.co_ = pCircuit_->circuitGates_[gate.fanoutVector_[0]].co_ + 1;
+				if (gate.numFO_ > 0)
+				{
+					gate.co_ = pCircuit_->circuitGates_[gate.fanoutVector_[0]].co_ + 1;
+				}
 				break;
 			case Gate::AND2:
 			case Gate::AND3:
@@ -4822,9 +4902,27 @@ void Atpg::calSCOAP()
 					}
 				}
 				break;
+			case Gate::MUX:
+				if (gate.numFO_ > 0)
+				{
+					gate.co_ = pCircuit_->circuitGates_[gate.fanoutVector_[0]].co_ + 1;
+					for (int j = 0; j < gate.numFI_; ++j)
+					{
+						if (gate.faninVector_[j] != gateID)
+						{
+							Gate &sib = pCircuit_->circuitGates_[gate.faninVector_[j]];
+							gate.co_ += std::min(sib.cc0_, sib.cc1_);
+						}
+					}
+				}
+				break;
+			case Gate::NA:
+				gate.co_ = INFINITE / 4;
+				break;
 			default:
-				std::cerr << "Bug: reach switch case default while calculating co_";
-				std::cin.get();
+				std::cerr << "Bug: reach switch case default while calculating co_ for gate type "
+				          << gate.gateType_ << "\n";
+				gate.co_ = INFINITE / 4;
 				break;
 		}
 	}

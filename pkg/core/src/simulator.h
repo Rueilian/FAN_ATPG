@@ -268,6 +268,16 @@ namespace CoreNs
 				pCircuit_->circuitGates_[gateID].goodSimHigh_ = (l1 & l2 & l3) | (l1 & h2 & h3) | (h1 & l2 & h3) | (h1 & h2 & l3);
 				// End of TO-DO
 				break;
+			case Gate::MUX:
+			{
+				const ParallelValue s0_l = (~h3) & l1;
+				const ParallelValue s0_h = (~l3) & h1;
+				const ParallelValue s1_l = (~l3) & l2;
+				const ParallelValue s1_h = (~h3) & h2;
+				pCircuit_->circuitGates_[gateID].goodSimLow_ = s0_l | s1_l | (l3 & h3 & (l1 | l2));
+				pCircuit_->circuitGates_[gateID].goodSimHigh_ = s0_h | s1_h | (l3 & h3 & (h1 & h2));
+				break;
+			}
 			case Gate::TIE1:
 				pCircuit_->circuitGates_[gateID].goodSimLow_ = PARA_L;
 				pCircuit_->circuitGates_[gateID].goodSimHigh_ = PARA_H;
@@ -411,6 +421,16 @@ namespace CoreNs
 				pCircuit_->circuitGates_[gateID].faultSimHigh_ = (l1 & l2 & l3) | (l1 & h2 & h3) | (h1 & l2 & h3) | (h1 & h2 & l3);
 				// End of TO-DO
 				break;
+			case Gate::MUX:
+			{
+				const ParallelValue s0_l = (~h3) & l1;
+				const ParallelValue s0_h = (~l3) & h1;
+				const ParallelValue s1_l = (~l3) & l2;
+				const ParallelValue s1_h = (~h3) & h2;
+				pCircuit_->circuitGates_[gateID].faultSimLow_ = s0_l | s1_l | (l3 & h3 & (l1 | l2));
+				pCircuit_->circuitGates_[gateID].faultSimHigh_ = s0_h | s1_h | (l3 & h3 & (h1 & h2));
+				break;
+			}
 			case Gate::TIE1:
 				pCircuit_->circuitGates_[gateID].faultSimLow_ = PARA_L;
 				pCircuit_->circuitGates_[gateID].faultSimHigh_ = PARA_H;

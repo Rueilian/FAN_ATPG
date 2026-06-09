@@ -185,6 +185,23 @@ void Circuit::calculateNumGate()
 
 	// Add the number of PPOs (PPIs) to the number of gates.
 	numGate_ += numPPI_;
+
+	// Pseudo gates for scan/clock ports at array tail (preserve PI|PPI|... layout).
+	numScanPseudoGates_ = 0;
+	for (int i = 0; i < (int)top->getNPort(); ++i)
+	{
+		Port *p = top->getPort(i);
+		if (p->type_ != Port::INPUT)
+		{
+			continue;
+		}
+		if (!strcmp(p->name_, "CK") || !strcmp(p->name_, "test_si") || !strcmp(p->name_, "test_se"))
+		{
+			portIndexToGateIndex_[i] = numGate_;
+			++numGate_;
+			++numScanPseudoGates_;
+		}
+	}
 }
 
 // **************************************************************************
@@ -251,6 +268,46 @@ void Circuit::createCircuitGates()
 	createCircuitComb();
 	createCircuitPO();
 	createCircuitPPO();
+	createCircuitScanPorts();
+}
+
+// **************************************************************************
+// Function   [ Circuit::createCircuitScanPorts ]
+// Synopsis   [ Pseudo gates for CK/test_si/test_se so fanin resolution does not
+//              alias to gate 0 (first functional PI). Capture-mode ATPG: SE=0. ]
+// **************************************************************************
+void Circuit::createCircuitScanPorts()
+{
+	Cell *top = pNetlist_->getTop();
+	for (int i = 0; i < (int)top->getNPort(); ++i)
+	{
+		Port *p = top->getPort(i);
+		if (p->type_ != Port::INPUT)
+		{
+			continue;
+		}
+		if (!strcmp(p->name_, "CK") || !strcmp(p->name_, "test_se") || !strcmp(p->name_, "test_si"))
+		{
+			/* fall through */
+		}
+		else
+		{
+			continue;
+		}
+		int gateID = portIndexToGateIndex_[i];
+		circuitGates_[gateID].gateId_ = gateID;
+		circuitGates_[gateID].cellId_ = -1;
+		circuitGates_[gateID].primitiveId_ = -1;
+		circuitGates_[gateID].numLevel_ = 0;
+		if (!strcmp(p->name_, "test_se") || !strcmp(p->name_, "test_si"))
+		{
+			circuitGates_[gateID].gateType_ = Gate::TIE0;
+		}
+		else if (!strcmp(p->name_, "CK"))
+		{
+			circuitGates_[gateID].gateType_ = Gate::TIE0;
+		}
+	}
 }
 
 // **************************************************************************
@@ -704,7 +761,7 @@ void Circuit::createCircuitPPO()
 	for (int i = 0; i < numPPI_; ++i)
 	{
 		Cell *cell = top->getCell(i);
-		int ppoGateID = numGate_ - numPPI_ + i;
+		int ppoGateID = numGate_ - numScanPseudoGates_ - numPPI_ + i;
 		circuitGates_[ppoGateID].gateId_ = ppoGateID;
 		circuitGates_[ppoGateID].cellId_ = i;
 		circuitGates_[ppoGateID].primitiveId_ = 0;

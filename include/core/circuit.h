@@ -44,6 +44,7 @@ namespace CoreNs
 		int numPPI_;                // Number of PPIs (PPOs).
 		int numPO_;                 // Number of POs.
 		int numComb_;               // Number of combinational gates.
+		int numScanPseudoGates_;    // CK/test_si/test_se pseudo gates at array tail.
 		int numGate_;               // Number of gates.
 		int numNet_;                // Number of nets.
 		int circuitLvl_;            // Circuit level, starting from inputs.
@@ -73,6 +74,7 @@ namespace CoreNs
 		void calculateNumNet();
 		void createCircuitGates();
 		void createCircuitPI();
+		void createCircuitScanPorts();
 		void createCircuitPPI();
 		void createCircuitComb();
 		void createCircuitPmt(const int &gateID, const IntfNs::Cell *const cell,
@@ -92,6 +94,7 @@ namespace CoreNs
 		numPPI_ = 0;
 		numPO_ = 0;
 		numComb_ = 0;
+		numScanPseudoGates_ = 0;
 		numGate_ = 0;
 		numNet_ = 0;
 		circuitLvl_ = -1;
@@ -105,7 +108,7 @@ namespace CoreNs
 		{
 			return true;
 		}
-		const int finalPpoStart = totalGate_ - numPPI_;
+		const int finalPpoStart = totalGate_ - numScanPseudoGates_ - numPPI_;
 		const int ppiIndex = gateId - finalPpoStart;
 		return ppiIndex >= 0 && ppiIndex < numPPI_ && !isPpiNonscan_[ppiIndex];
 	}

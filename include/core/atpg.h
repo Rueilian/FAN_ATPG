@@ -330,6 +330,20 @@ namespace CoreNs
 				return cXNOR2(v[0], v[1]);
 			case Gate::XNOR3:
 				return cXNOR3(v[0], v[1], v[2]);
+			case Gate::MUX:
+				if (v[2] == L)
+				{
+					return v[0];
+				}
+				if (v[2] == H)
+				{
+					return v[1];
+				}
+				if (v[0] == v[1])
+				{
+					return v[0];
+				}
+				return X;
 			default:
 				return v[0];
 		}
