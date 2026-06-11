@@ -77,7 +77,6 @@ void Atpg::generatePatternSet(PatternProcessor *pPatternProcessor, FaultListExtr
 		return;
 	}
 
-	Fault *pCurrentFault = NULL;
 	FaultPtrList originalFaultPtrList, faultPtrListForSTC;
 	setupCircuitParameter();
 	pPatternProcessor->init(pCircuit_);
@@ -95,45 +94,18 @@ void Atpg::generatePatternSet(PatternProcessor *pPatternProcessor, FaultListExtr
 	}
 	sortFaultListFanInCone(originalFaultPtrList);
 
-	// testClearFaultEffect(originalFaultPtrList); // only used for debug
-
-	const double faultPtrListSize = (double)(originalFaultPtrList.size());
-	int numOfAtpgUntestableFaults = 0;
-	// record pattern set when lower undetected fault/ lower test length with same undetected fault
-	numOfAtpgUntestableFaults = 0;
-
 	pPatternProcessor->patternVector_.clear();
 	pPatternProcessor->patternVector_.reserve(MAX_LIST_SIZE);
 
-	// start ATPG
-	while (!originalFaultPtrList.empty())
+	backtrackLimit_ = twoPhaseAtpg_ ? FAST_BACKTRACK_LIMIT : BACKTRACK_LIMIT;
+	runSaAtpgMainLoop(originalFaultPtrList, pPatternProcessor);
+
+	if (twoPhaseAtpg_)
 	{
-		// meaning the originalFaultPtrList is already left with aborted fault
-		if (originalFaultPtrList.front()->faultState_ == Fault::AB)
-		{
-			break;
-		}
-
-		// the fault is not popped in previous call of StuckAtFaultATPG()
-		// => the fault is neither aborted nor untestable => a pattern was found => detected fault
-		if (pCurrentFault == originalFaultPtrList.front())
-		{
-			originalFaultPtrList.front()->faultState_ = Fault::DT;
-			originalFaultPtrList.pop_front();
-			continue;
-		}
-
-		pCurrentFault = originalFaultPtrList.front();
-		const bool isTransitionDelayFault = (pCurrentFault->faultType_ == Fault::STR || pCurrentFault->faultType_ == Fault::STF);
-		if (isTransitionDelayFault)
-		{
-			TransitionDelayFaultATPG(originalFaultPtrList, pPatternProcessor, numOfAtpgUntestableFaults);
-		}
-		else
-		{
-			StuckAtFaultATPG(originalFaultPtrList, pPatternProcessor, numOfAtpgUntestableFaults);
-		}
+		runResidualAtpgPhase(pPatternProcessor, pFaultListExtractor);
 	}
+
+	int numOfAtpgUntestableFaults = 0;
 	if (pPatternProcessor->staticCompression_ == PatternProcessor::ON)
 	{
 		staticTestCompressionByReverseFaultSimulation(pPatternProcessor, faultPtrListForSTC);
@@ -772,6 +744,70 @@ void Atpg::sortFaultListFanInCone(FaultPtrList &faultList) const
 	});
 }
 
+void Atpg::sortFaultListFanInConeDescending(FaultPtrList &faultList) const
+{
+	sortFaultListFanInCone(faultList);
+	faultList.reverse();
+}
+
+void Atpg::runSaAtpgMainLoop(FaultPtrList &workList, PatternProcessor *pPatternProcessor)
+{
+	Fault *pCurrentFault = nullptr;
+	int numOfAtpgUntestableFaults = 0;
+
+	while (!workList.empty())
+	{
+		if (workList.front()->faultState_ == Fault::AB)
+		{
+			break;
+		}
+
+		if (pCurrentFault == workList.front())
+		{
+			workList.front()->faultState_ = Fault::DT;
+			workList.pop_front();
+			continue;
+		}
+
+		pCurrentFault = workList.front();
+		const bool isTransitionDelayFault = (pCurrentFault->faultType_ == Fault::STR || pCurrentFault->faultType_ == Fault::STF);
+		if (isTransitionDelayFault)
+		{
+			TransitionDelayFaultATPG(workList, pPatternProcessor, numOfAtpgUntestableFaults);
+		}
+		else
+		{
+			StuckAtFaultATPG(workList, pPatternProcessor, numOfAtpgUntestableFaults);
+		}
+	}
+}
+
+void Atpg::runResidualAtpgPhase(PatternProcessor *pPatternProcessor, FaultListExtract *pFaultListExtractor)
+{
+	FaultPtrList residual;
+	for (Fault *pFault : pFaultListExtractor->faultsInCircuit_)
+	{
+		if (pFault->faultState_ == Fault::AU && pFault->faultyLine_ >= 0)
+		{
+			pFault->faultState_ = Fault::UD;
+			residual.push_back(pFault);
+		}
+	}
+	if (residual.empty())
+	{
+		return;
+	}
+
+	const int savedLimit = backtrackLimit_;
+	const double savedPto = perTargetTimeoutSec_;
+	backtrackLimit_ = BACKTRACK_LIMIT;
+	perTargetTimeoutSec_ = 0.0;
+	sortFaultListFanInConeDescending(residual);
+	runSaAtpgMainLoop(residual, pPatternProcessor);
+	backtrackLimit_ = savedLimit;
+	perTargetTimeoutSec_ = savedPto;
+}
+
 void Atpg::globalFaultDropAfterPattern(PatternProcessor *pPatternProcessor, FaultPtrList &remainingFaults)
 {
 	if (pPatternProcessor->patternVector_.empty())
@@ -804,6 +840,8 @@ void parallelAtpgWorker(ParallelAtpgShared *shared, FaultPtrList bucket, Circuit
 	Simulator localSim(&local);
 	Atpg localAtpg(&local, &localSim);
 	localAtpg.setPerTargetTimeoutSec(shared->perTargetTimeout);
+	localAtpg.backtrackLimit_ = shared->masterAtpg->twoPhaseAtpg_ ? FAST_BACKTRACK_LIMIT : BACKTRACK_LIMIT;
+	localAtpg.twoPhaseAtpg_ = false;
 
 	PatternProcessor localPP;
 	localPP.init(&local);
@@ -909,6 +947,11 @@ void Atpg::generatePatternSetParallel(PatternProcessor *pPatternProcessor, Fault
 	for (std::thread &t : workers)
 	{
 		t.join();
+	}
+
+	if (twoPhaseAtpg_)
+	{
+		runResidualAtpgPhase(pPatternProcessor, pFaultListExtractor);
 	}
 
 	if (pPatternProcessor->staticCompression_ == PatternProcessor::ON)
@@ -1369,7 +1412,7 @@ Atpg::SINGLE_PATTERN_GENERATION_STATUS Atpg::generateSinglePatternOnTargetFault(
 				++numOfBacktrack;
 			}
 			// Abort if numOfBacktrack reaching the BACKTRACK_LIMIT
-			if (numOfBacktrack > BACKTRACK_LIMIT)
+			if (numOfBacktrack > backtrackLimit_)
 			{
 				genStatus = ABORT;
 				Finish = true;
@@ -1457,7 +1500,7 @@ Atpg::SINGLE_PATTERN_GENERATION_STATUS Atpg::generateSinglePatternOnTargetFault(
 					++numOfBacktrack;
 				}
 				// Abort if numOfBacktrack reaching the BACKTRACK_LIMIT
-				if (numOfBacktrack > BACKTRACK_LIMIT)
+				if (numOfBacktrack > backtrackLimit_)
 				{
 					genStatus = ABORT;
 					Finish = true;
@@ -2238,6 +2281,79 @@ Atpg::IMPLICATION_STATUS Atpg::doOneGateBackwardImplication(Gate *pGate)
 				pushGateFanoutsToEventStack(pGate->faninVector_[1]);
 			}
 			else if (pGate->atpgVal_ == X)
+			{
+				unjustifiedGateIDs_.push_back(pGate->gateId_);
+				implicationStatus = FORWARD;
+			}
+		}
+		else if (pGate->atpgVal_ == D || pGate->atpgVal_ == B)
+		{
+			const Value goodOut = (pGate->atpgVal_ == D) ? H : L;
+			if (pS->atpgVal_ == L && pA->atpgVal_ == X)
+			{
+				if (isUncontrollableSource(pA))
+				{
+					return CONFLICT;
+				}
+				pA->atpgVal_ = goodOut;
+				gateID_to_valModified_[pGate->gateId_] = 1;
+				backtrackImplicatedGateIDs_.push_back(pA->gateId_);
+				pushGateToEventStack(pGate->faninVector_[0]);
+				pushGateFanoutsToEventStack(pGate->faninVector_[0]);
+			}
+			else if (pS->atpgVal_ == H && pB->atpgVal_ == X)
+			{
+				if (isUncontrollableSource(pB))
+				{
+					return CONFLICT;
+				}
+				pB->atpgVal_ = goodOut;
+				gateID_to_valModified_[pGate->gateId_] = 1;
+				backtrackImplicatedGateIDs_.push_back(pB->gateId_);
+				pushGateToEventStack(pGate->faninVector_[1]);
+				pushGateFanoutsToEventStack(pGate->faninVector_[1]);
+			}
+			else if (pS->atpgVal_ == X)
+			{
+				if (pA->atpgVal_ == X && pB->atpgVal_ == goodOut)
+				{
+					if (isUncontrollableSource(pS) || isUncontrollableSource(pA))
+					{
+						return CONFLICT;
+					}
+					pS->atpgVal_ = L;
+					pA->atpgVal_ = goodOut;
+					gateID_to_valModified_[pGate->gateId_] = 1;
+					backtrackImplicatedGateIDs_.push_back(pS->gateId_);
+					backtrackImplicatedGateIDs_.push_back(pA->gateId_);
+					pushGateToEventStack(pGate->faninVector_[2]);
+					pushGateFanoutsToEventStack(pGate->faninVector_[2]);
+					pushGateToEventStack(pGate->faninVector_[0]);
+					pushGateFanoutsToEventStack(pGate->faninVector_[0]);
+				}
+				else if (pB->atpgVal_ == X && pA->atpgVal_ == goodOut)
+				{
+					if (isUncontrollableSource(pS) || isUncontrollableSource(pB))
+					{
+						return CONFLICT;
+					}
+					pS->atpgVal_ = H;
+					pB->atpgVal_ = goodOut;
+					gateID_to_valModified_[pGate->gateId_] = 1;
+					backtrackImplicatedGateIDs_.push_back(pS->gateId_);
+					backtrackImplicatedGateIDs_.push_back(pB->gateId_);
+					pushGateToEventStack(pGate->faninVector_[2]);
+					pushGateFanoutsToEventStack(pGate->faninVector_[2]);
+					pushGateToEventStack(pGate->faninVector_[1]);
+					pushGateFanoutsToEventStack(pGate->faninVector_[1]);
+				}
+				else
+				{
+					unjustifiedGateIDs_.push_back(pGate->gateId_);
+					implicationStatus = FORWARD;
+				}
+			}
+			else
 			{
 				unjustifiedGateIDs_.push_back(pGate->gateId_);
 				implicationStatus = FORWARD;
@@ -4946,6 +5062,49 @@ Atpg::IMPLICATION_STATUS Atpg::evaluateAndSetFaultyGateAtpgVal(Gate *pGate)
 				else
 				{
 					ImpVal = pGate->atpgVal_;
+				}
+
+				if (pGate->gateType_ == Gate::MUX && pGate->numFI_ >= 3)
+				{
+					Gate *pA = &pCircuit_->circuitGates_[pGate->faninVector_[0]];
+					Gate *pB = &pCircuit_->circuitGates_[pGate->faninVector_[1]];
+					Gate *pS = &pCircuit_->circuitGates_[pGate->faninVector_[2]];
+					if (ImpPtr == 2)
+					{
+						ImpVal = (pA->atpgVal_ == ImpVal) ? L : H;
+					}
+					else if (ImpPtr == 0)
+					{
+						if (pS->atpgVal_ == H)
+						{
+							unjustifiedGateIDs_.push_back(pGate->gateId_);
+							return FORWARD;
+						}
+						if (pS->atpgVal_ == X)
+						{
+							pS->atpgVal_ = L;
+							gateID_to_valModified_[pGate->gateId_] = 1;
+							backtrackImplicatedGateIDs_.push_back(pS->gateId_);
+							pushGateToEventStack(pGate->faninVector_[2]);
+							pushGateFanoutsToEventStack(pGate->faninVector_[2]);
+						}
+					}
+					else if (ImpPtr == 1)
+					{
+						if (pS->atpgVal_ == L)
+						{
+							unjustifiedGateIDs_.push_back(pGate->gateId_);
+							return FORWARD;
+						}
+						if (pS->atpgVal_ == X)
+						{
+							pS->atpgVal_ = H;
+							gateID_to_valModified_[pGate->gateId_] = 1;
+							backtrackImplicatedGateIDs_.push_back(pS->gateId_);
+							pushGateToEventStack(pGate->faninVector_[2]);
+							pushGateFanoutsToEventStack(pGate->faninVector_[2]);
+						}
+					}
 				}
 
 				// set ImpVal if pGate is XOR2 or XNOR2

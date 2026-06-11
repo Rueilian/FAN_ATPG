@@ -23,6 +23,7 @@ namespace CoreNs
 	void parallelAtpgWorker(ParallelAtpgShared *shared, FaultPtrList bucket, Circuit circuitTemplate);
 
 	constexpr int BACKTRACK_LIMIT = 5000;
+	constexpr int FAST_BACKTRACK_LIMIT = 800;
 	constexpr int INFINITE = 0x7fffffff;
 	constexpr int MAX_LIST_SIZE = 1000;
 	constexpr int NO_UNIQUE_PATH = -1;
@@ -84,6 +85,8 @@ namespace CoreNs
 	private:
 		int numThreads_ = 0;                                         // 0 = auto (all cores) at run_atpg
 		double perTargetTimeoutSec_ = 0.0;                           // per-target-fault wall-clock timeout in seconds; 0=disabled
+		int backtrackLimit_ = BACKTRACK_LIMIT;                       // phase-dependent backtrack cap
+		bool twoPhaseAtpg_ = true;                                   // fast pass then AU residual retry
 		Circuit *pCircuit_;																				// the circuit built on read verilog
 		Simulator *pSimulator_;																		// the simulator based on the built circuit
 		Fault currentTargetFault_;																// current target fault for generateSinglePatternOnTargetFault
@@ -124,6 +127,9 @@ namespace CoreNs
 
 		int fanInConeSize(const Fault *fault) const;
 		void sortFaultListFanInCone(FaultPtrList &faultList) const;
+		void sortFaultListFanInConeDescending(FaultPtrList &faultList) const;
+		void runSaAtpgMainLoop(FaultPtrList &workList, PatternProcessor *pPatternProcessor);
+		void runResidualAtpgPhase(PatternProcessor *pPatternProcessor, FaultListExtract *pFaultListExtractor);
 		void generatePatternSetParallel(PatternProcessor *pPatternProcessor, FaultListExtract *pFaultListExtractor);
 		void globalFaultDropAfterPattern(PatternProcessor *pPatternProcessor, FaultPtrList &remainingFaults);
 		bool multipleBacktracePropagateFanin(Gate *pFaninGate, int nn0, int nn1, int &possibleFinalObjectiveID);
@@ -767,6 +773,44 @@ namespace CoreNs
 					}
 				}
 				return val;
+			case Gate::MUX:
+			{
+				if (gate.numFI_ < 3)
+				{
+					return gate.atpgVal_;
+				}
+				auto stuckInput = [&](int idx) -> Value {
+					Value v = pCircuit_->circuitGates_[gate.faninVector_[idx]].atpgVal_;
+					if (idx + 1 == faultyLine)
+					{
+						if (v == L && (currentTargetFault_.faultType_ == Fault::SA1 || currentTargetFault_.faultType_ == Fault::STF))
+						{
+							v = B;
+						}
+						if (v == H && (currentTargetFault_.faultType_ == Fault::SA0 || currentTargetFault_.faultType_ == Fault::STR))
+						{
+							v = D;
+						}
+					}
+					return v;
+				};
+				const Value a = stuckInput(0);
+				const Value b = stuckInput(1);
+				const Value s = stuckInput(2);
+				if (s == L)
+				{
+					return a;
+				}
+				if (s == H)
+				{
+					return b;
+				}
+				if (a == b)
+				{
+					return a;
+				}
+				return X;
+			}
 			default:
 				return gate.atpgVal_;
 		}
