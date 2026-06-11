@@ -172,3 +172,20 @@ s510 still achieves ~95% because large combinational logic between PPI/PPO provi
 - `pkg/core/src/atpg.cpp` — calSCOAP reset/guards, MUX implication
 - `pkg/core/src/atpg.h` — MUX evaluateGoodVal
 - `pkg/core/src/simulator.h` — MUX good/fault sim
+
+---
+
+## 5. Phase D + Scan-Protocol Update (2026-06-09)
+
+Phase D PODEM fixes (atomic MUX2/compound gates) raised b03 from ~35% to **FC_scan ≈ 93%**. Scan-protocol metric aligns with industry practice (reset held inactive during ATPG):
+
+| Metric | b03.v（auto scan protocol） | b03_reset_tie.v |
+|--------|------------------------------|-----------------|
+| **FC_scan** | **93.03%** | 92.97% |
+| FC_raw (appendix) | 92.83% | 92.97% |
+| AU_comb | 2 | 2 |
+| TI_scan (reset) | 2 | 0 (no reset PI) |
+
+**Residual AU:** `_157_` (AOI211) + `_159_/A3` (NOR4) — likely UD in frame-1 FSM context; not worth further PODEM patching.
+
+**Docs:** [`docs/superpowers/plans/2026-06-09-scan-protocol-fc-metric.md`](../../docs/superpowers/plans/2026-06-09-scan-protocol-fc-metric.md), [`2026-06-09-phase-d-podem-fix.md`](../../docs/superpowers/plans/2026-06-09-phase-d-podem-fix.md).

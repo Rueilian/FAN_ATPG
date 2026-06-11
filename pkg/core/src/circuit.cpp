@@ -21,16 +21,22 @@ bool isMux2LibCell(const Cell *cell)
 	        !strcmp(cell->libc_->name_, "MUX2_X2"));
 }
 
+bool isAtomicLibCell(const Cell *cell)
+{
+	return isMux2LibCell(cell);
+}
+
 int combOutputGateId(Circuit *cir, Techlib *techlib, Cell *driverCell, const int outLibPortId)
 {
 	int gateId = cir->cellIndexToGateIndex_[driverCell->id_];
-	if (techlib->hasPmt(driverCell->libc_->id_, Pmt::DFF) || isMux2LibCell(driverCell))
+	if (techlib->hasPmt(driverCell->libc_->id_, Pmt::DFF) || isAtomicLibCell(driverCell))
 	{
 		return gateId;
 	}
 	gateId += (*(driverCell->libc_->getPortCells(outLibPortId).begin()))->id_;
 	return gateId;
 }
+
 }
 
 // **************************************************************************
@@ -182,7 +188,7 @@ void Circuit::calculateNumGate()
 			++numPPI_;
 			++numGate_;
 		}
-		else if (isMux2LibCell(top->getCell(i)))
+		else if (isAtomicLibCell(top->getCell(i)))
 		{
 			numGate_ += 1;
 		}

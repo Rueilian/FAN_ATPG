@@ -13,6 +13,7 @@
 #include "pattern.h"
 #include "simulator.h"
 #include "atpg.h"
+#include "scan_protocol.h"
 
 using namespace IntfNs;
 using namespace CoreNs;
@@ -72,15 +73,55 @@ static int countMuxGates(const Circuit &cir)
 	return n;
 }
 
+static int countMux2X1Cells(const Netlist &nl)
+{
+	int n = 0;
+	Cell *top = nl.getTop();
+	for (int i = 0; i < (int)top->getNCell(); ++i)
+	{
+		const Cell *cell = top->getCell(i);
+		if (cell && cell->libc_ && !strcmp(cell->libc_->name_, "MUX2_X1"))
+		{
+			++n;
+		}
+	}
+	return n;
+}
+
+static int countOaiAoiCompoundCells(const Netlist &nl)
+{
+	int n = 0;
+	Cell *top = nl.getTop();
+	for (int i = 0; i < (int)top->getNCell(); ++i)
+	{
+		const Cell *cell = top->getCell(i);
+		if (!cell || !cell->libc_)
+		{
+			continue;
+		}
+		const char *name = cell->libc_->name_;
+		if (!strncmp(name, "OAI21_X", 7) || !strncmp(name, "OAI221_X", 8) ||
+		    !strncmp(name, "OAI222_X", 8) || !strncmp(name, "AOI21_X", 7) ||
+		    !strncmp(name, "AOI22_X", 7) || !strncmp(name, "AOI211_X", 8))
+		{
+			++n;
+		}
+	}
+	return n;
+}
+
 struct AtpgStats
 {
 	int dt = 0;
 	int au = 0;
+	int auComb = 0;
 	int collapsed = 0;
-	double fc = 0.0;
+	double fcScan = 0.0;
+	double fcScanCollapsed = 0.0;
+	double fcRaw = 0.0;
 };
 
-static AtpgStats runAtpg(Circuit *cir)
+static AtpgStats runAtpg(Circuit *cir, bool useScanProtocol)
 {
 	FaultListExtract fl;
 	fl.faultListType_ = FaultListExtract::SAF;
@@ -92,6 +133,11 @@ static AtpgStats runAtpg(Circuit *cir)
 		fl.faultsInCircuit_.push_back(&fl.extractedFaults_[i]);
 	}
 
+	if (useScanProtocol)
+	{
+		applyScanProtocol(cir, &fl);
+	}
+
 	PatternProcessor pc;
 	pc.dynamicCompression_ = PatternProcessor::ON;
 	pc.staticCompression_ = PatternProcessor::ON;
@@ -100,20 +146,16 @@ static AtpgStats runAtpg(Circuit *cir)
 	Atpg atpg(cir, &sim);
 	atpg.generatePatternSet(&pc, &fl, true);
 
+	ScanProtocolStats scanStats = computeScanProtocolStats(cir, fl.faultsInCircuit_);
+
 	AtpgStats s;
-	for (Fault *f : fl.faultsInCircuit_)
-	{
-		if (f->faultState_ == Fault::DT)
-		{
-			++s.dt;
-		}
-		else if (f->faultState_ == Fault::AU)
-		{
-			++s.au;
-		}
-	}
+	s.dt = (int)scanStats.dtFull;
+	s.au = (int)scanStats.auFull;
+	s.auComb = (int)scanStats.auCombCollapsed;
 	s.collapsed = (int)fl.extractedFaults_.size();
-	s.fc = s.collapsed > 0 ? 100.0 * s.dt / s.collapsed : 0.0;
+	s.fcScan = scanStats.fcScan;
+	s.fcScanCollapsed = scanStats.fcScanCollapsed;
+	s.fcRaw = scanStats.fcRaw;
 	return s;
 }
 
@@ -130,16 +172,16 @@ static void testTinySdffr(const char *mdt, const char *nlPath)
 
 	Circuit cir;
 	expect(cir.buildCircuit(nl, 1), "tiny_sdffr buildCircuit");
-	AtpgStats st = runAtpg(&cir);
-	fprintf(stderr, "tiny_sdffr: FC=%.2f%% DT=%d AU=%d\n", st.fc, st.dt, st.au);
+	AtpgStats st = runAtpg(&cir, true);
+	fprintf(stderr, "tiny_sdffr: FC_scan=%.2f%% DT=%d AU=%d\n", st.fcScan, st.dt, st.au);
 	expect(st.au == 0, "tiny_sdffr AU must stay 0");
-	expect(st.fc >= 85.0, "tiny_sdffr FC must be >= 85%");
+	expect(st.fcScan >= 85.0, "tiny_sdffr FC_scan must be >= 85%");
 
 	delete nl;
 	delete lib;
 }
 
-static void testB03MuxAndPi(const char *mdt, const char *nlPath)
+static void testB03MuxAndPi(const char *mdt, const char *nlPath, const char *label)
 {
 	Techlib *lib = nullptr;
 	Netlist *nl = nullptr;
@@ -154,18 +196,31 @@ static void testB03MuxAndPi(const char *mdt, const char *nlPath)
 	expect(cir.buildCircuit(nl, 1), "b03 buildCircuit");
 
 	int mux = countMuxGates(cir);
-	fprintf(stderr, "b03: atomic MUX gates=%d\n", mux);
-	expect(mux == 33, "b03 must have 33 Gate::MUX cells");
+	const int mux2x1 = countMux2X1Cells(*nl);
+	const int oaiAoi = countOaiAoiCompoundCells(*nl);
+	fprintf(stderr, "b03: atomic MUX gates=%d netlist MUX2_X1=%d OAI/AOI compounds=%d\n",
+	        mux, mux2x1, oaiAoi);
+	expect(mux == mux2x1, "b03 Gate::MUX count must match netlist MUX2_X1 count");
+	expect(oaiAoi == 0, "b03 netlist must not contain OAI/AOI compound cells");
 
 	FaultListExtract fl;
 	fl.faultListType_ = FaultListExtract::SAF;
 	fl.extractFaultFromCircuit(&cir);
 
-	AtpgStats st = runAtpg(&cir);
-	fprintf(stderr, "b03 full: FC=%.2f%% DT=%d AU=%d collapsed=%d\n",
-	        st.fc, st.dt, st.au, st.collapsed);
-	expect(st.fc >= 70.0, "b03 FC must be >= 70% after Phase D MUX2 modeling");
-	expect(st.au < 300, "b03 AU must drop below 300 after Phase D");
+	AtpgStats st = runAtpg(&cir, true);
+	fprintf(stderr, "%s: FC_scan=%.2f%% FC_scan_coll=%.2f%% FC_raw=%.2f%% DT=%d AU=%d AU_comb=%d collapsed=%d\n",
+	        label, st.fcScan, st.fcScanCollapsed, st.fcRaw, st.dt, st.au, st.auComb, st.collapsed);
+	if (strstr(label, "scan_proto") != nullptr)
+	{
+		// Base-gate netlist (no OAI/AOI compounds): primitive PODEM ceiling ~90.5% on b03.
+		expect(st.fcScan >= 90.0, "b03.v FC_scan must be >= 90% (base-gate pipeline)");
+		expect(st.auComb <= 12, "b03.v comb AU must be <= 12 (base-gate pipeline)");
+	}
+	else
+	{
+		expect(st.fcScan >= 90.0, "b03_reset_tie FC_scan must be >= 90% (base-gate pipeline)");
+		expect(st.auComb <= 12, "b03_reset_tie comb AU must be <= 12 (base-gate pipeline)");
+	}
 
 	delete nl;
 	delete lib;
@@ -177,9 +232,11 @@ int main(int argc, char **argv)
 	std::string mdt = std::string(root) + "/techlib/mod_nangate45.mdt";
 	std::string tiny = std::string(root) + "/mod_netlist/tiny_sdffr.v";
 	std::string b03 = std::string(root) + "/mod_netlist/b03.v";
+	std::string b03ResetTie = std::string(root) + "/mod_netlist/b03_reset_tie.v";
 
 	testTinySdffr(mdt.c_str(), tiny.c_str());
-	testB03MuxAndPi(mdt.c_str(), b03.c_str());
+	testB03MuxAndPi(mdt.c_str(), b03.c_str(), "b03_scan_proto");
+	testB03MuxAndPi(mdt.c_str(), b03ResetTie.c_str(), "b03_reset_tie");
 
 	if (failures == 0)
 	{

@@ -26,17 +26,26 @@
 3. **b03 remains ~35% after C1** — remaining 948 AU dominated by MUX2-heavy combinational logic (341 MUX2_X1 AU); FAN PODEM ceiling on reconvergent FSM, not netlist format.
 4. **RN / reset tie-high not sufficient** — async control tying does not materially change b03 FC on FAN.
 
-## Conclusion
+## Conclusion (Phase C, historical)
 
-| Question | Answer |
-|----------|--------|
+| Question | Answer (at Phase C) |
+|----------|------------------------|
 | Is low FC a netlist/scan format problem? | **No** — structural verify PASS; C1 proved observation bug |
 | Is low FC ITC'99 inherent? | **No** — literature/commercial reference ~99% |
-| Is low FC primarily FAN engine on b03 scale? | **Yes** — tiny circuits fixed; b03 MUX/FSM still AU-heavy |
-| G2 (b03 ≥ 80%)? | **FAIL** → proceed with **fallback** partial-scan narrative |
+| Is low FC primarily FAN engine on b03 scale? | **Yes (then)** — MUX/FSM AU-heavy before Phase D |
+| G2 (b03 ≥ 80%)? | **FAIL (then)** → triggered Phase D |
 
-## Recommended Report Framing
+## Phase D + Scan-Protocol Update (2026-06-09)
 
-- **Positive:** Phase C fix + tiny_sdffr/s510 regression proves FAN can work on full-scan when observation path is correct.
-- **Negative (honest):** FAN on b03 ITC'99 netlist hits ~35% FC vs industry ~99%; progressive residual gains on AU-dominated residual are expected to be small.
-- **Do not claim:** "ITC'99 full-scan ceiling is 35%" — evidence contradicts this.
+| Experiment | FC_scan | FC_raw | AU_comb | Notes |
+|------------|---------|--------|---------|-------|
+| b03 + Phase D PODEM + auto scan protocol | **93.03%** | 92.83% | **2** | Primary metric; reset PI → TI |
+| b03_reset_tie.v + scan protocol | 92.97% | 92.97% | 2 | Structural reset deassert |
+| Commercial reference (DVCON) | — | ~99% | — | 882 faults PASS |
+
+**Revised framing:**
+
+- Phase C correctly identified observation bug + engine ceiling; Phase D addressed PODEM/MUX modeling.
+- Report **FC_scan** (async reset excluded per Cummings SNUG 2002); put **FC_raw** and AU_reset in appendix.
+- Remaining gap vs commercial ~99% is mainly **QN UD (62)** + **2 comb AU**, not reset protocol mismatch.
+- See [`docs/superpowers/plans/2026-06-09-scan-protocol-fc-metric.md`](../../docs/superpowers/plans/2026-06-09-scan-protocol-fc-metric.md).

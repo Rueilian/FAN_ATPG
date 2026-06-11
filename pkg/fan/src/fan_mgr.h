@@ -31,6 +31,9 @@ public:
         sim            = NULL;
         atpg           = NULL;
         perTargetTimeout_ = 0.0;
+        atpgThreads_ = 0;
+        scanProtocolEnabled_ = true;
+        scanProtocolApplied_ = false;
         atpgStat.rTime = 0;
     }
     ~FanMgr() {}
@@ -43,6 +46,9 @@ public:
     CoreNs::Simulator   *sim;
     CoreNs::Atpg        *atpg;
     double               perTargetTimeout_;  // stored per-target timeout until Atpg is created
+    int                  atpgThreads_;       // parallel fault-partition workers (1 = sequential)
+    bool                 scanProtocolEnabled_;  // auto TI async reset/control PIs (default on)
+    bool                 scanProtocolApplied_;
     CommonNs::TmUsage   tmusg;
     CommonNs::TmStat    atpgStat;
     // Cell names of FFs declared as non-scan (set by set_nonscan_ff before build_circuit).

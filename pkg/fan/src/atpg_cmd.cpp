@@ -11,6 +11,7 @@
 
 #include "atpg_cmd.h"
 #include "core/pattern_rw.h"
+#include "core/scan_protocol.h"
 #include "core/simulator.h"
 
 using namespace CommonNs;
@@ -19,6 +20,26 @@ using namespace CoreNs;
 using namespace FanNs;
 
 double rtime;
+
+static void maybeApplyScanProtocol(FanMgr *fanMgr)
+{
+	if (!fanMgr->cir || !fanMgr->fListExtract || fanMgr->fListExtract->faultsInCircuit_.empty())
+	{
+		return;
+	}
+	if (!fanMgr->scanProtocolEnabled_ || fanMgr->scanProtocolApplied_)
+	{
+		return;
+	}
+
+	const int marked = applyScanProtocol(fanMgr->cir, fanMgr->fListExtract);
+	fanMgr->scanProtocolApplied_ = true;
+	if (marked > 0)
+	{
+		std::cout << "#  Scan protocol (auto): marked " << marked
+		          << " async-control fault(s) as TI (deasserted during ATPG)\n";
+	}
+}
 
 ReadPatCmd::ReadPatCmd(const std::string &name, FanMgr *fanMgr) : Cmd(name)
 {
@@ -276,6 +297,7 @@ bool AddFaultCmd::exec(const std::vector<std::string> &argv)
 		fanMgr_->fListExtract = new FaultListExtract;
 	}
 
+	fanMgr_->scanProtocolApplied_ = false;
 	fanMgr_->fListExtract->extractFaultFromCircuit(fanMgr_->cir);
 
 	// load faults from file
@@ -290,6 +312,7 @@ bool AddFaultCmd::exec(const std::vector<std::string> &argv)
 	else if (optMgr_.isFlagSet("a"))
 	{
 		addAllFault();
+		maybeApplyScanProtocol(fanMgr_);
 	}
 	else
 	{ // add specific faults
@@ -1148,6 +1171,9 @@ bool ReportStatsCmd::exec(const std::vector<std::string> &argv)
 	float tc = (float)dt / (float)(ud + dt + pt + ab + to) * 100;
 	float ae = (float)(dt + au + ti + re) / (float)fu * 100;
 
+	ScanProtocolStats scanStats = computeScanProtocolStats(
+		fanMgr_->cir, fanMgr_->fListExtract->faultsInCircuit_);
+
 	std::cout << std::right;
 	std::cout << std::setprecision(4);
 	std::cout << "#                 Statistics Report\n";
@@ -1168,16 +1194,24 @@ bool ReportStatsCmd::exec(const std::vector<std::string> &argv)
 	std::cout << "#    AB (atpg abort)             " << std::setw(19) << ab << "\n";
 	std::cout << "#    TO (timeout)                " << std::setw(19) << to << "\n";
 	std::cout << "#    TI (tied)                   " << std::setw(19) << ti << "\n";
+	std::cout << "#    TI (scan async control)     " << std::setw(19) << scanStats.tiScanFull << "\n";
 	std::cout << "#    --------------------------  -------------------\n";
 	std::cout << "#    DT (detected)               " << std::setw(19) << dt << "\n";
 	std::cout << "#  -------------------------------------------------\n";
 	std::cout << "#  Coverage                               percentage\n";
 	std::cout << "#    --------------------------  -------------------\n";
-	std::cout << "#    test coverage                            ";
-	std::cout << std::setw(5) << tc << "%\n";
-	std::cout << "#    fault coverage                           ";
+	std::cout << "#    fault coverage (scan protocol)           ";
+	std::cout << std::setw(5) << scanStats.fcScan << "%\n";
+	std::cout << "#    fault coverage (scan, collapsed)         ";
+	std::cout << std::setw(5) << scanStats.fcScanCollapsed << "%\n";
+	std::cout << "#    test coverage (scan protocol)            ";
+	std::cout << std::setw(5) << scanStats.testCovScan << "%\n";
+	std::cout << "#    --------------------------  -------------------\n";
+	std::cout << "#    fault coverage (raw, appendix)           ";
 	std::cout << std::setw(5) << fc << "%\n";
-	std::cout << "#    atpg effectiveness                       ";
+	std::cout << "#    test coverage (raw, appendix)            ";
+	std::cout << std::setw(5) << tc << "%\n";
+	std::cout << "#    atpg effectiveness (appendix)              ";
 	std::cout << std::setw(5) << ae << "%\n";
 	std::cout << "#  -------------------------------------------------\n";
 	std::cout << "#  #Patterns                     " << std::setw(19) << npat << "\n";
@@ -1424,8 +1458,11 @@ bool RunAtpgCmd::exec(const std::vector<std::string> &argv)
 	if (!fanMgr_->fListExtract)
 	{
 		fanMgr_->fListExtract = new FaultListExtract;
+		fanMgr_->scanProtocolApplied_ = false;
 		fanMgr_->fListExtract->extractFaultFromCircuit(fanMgr_->cir);
 	}
+
+	maybeApplyScanProtocol(fanMgr_);
 
 	if (!fanMgr_->sim)
 	{
@@ -1436,8 +1473,11 @@ bool RunAtpgCmd::exec(const std::vector<std::string> &argv)
 	fanMgr_->atpg = new Atpg(fanMgr_->cir, fanMgr_->sim);
 	if (fanMgr_->perTargetTimeout_ > 0.0)
 		fanMgr_->atpg->setPerTargetTimeoutSec(fanMgr_->perTargetTimeout_);
+	fanMgr_->atpg->setNumThreads(fanMgr_->atpgThreads_);
 
-	std::cout << "#  Performing pattern generation ...\n";
+	std::cout << "#  Performing pattern generation ...";
+	std::cout << " (" << fanMgr_->atpg->numThreads() << " workers)";
+	std::cout << "\n";
 	fanMgr_->tmusg.periodStart();
 
 	fanMgr_->atpg->generatePatternSet(fanMgr_->pcoll, fanMgr_->fListExtract, true);

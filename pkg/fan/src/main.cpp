@@ -6,6 +6,7 @@
 // **************************************************************************
 
 #include <cstdlib>
+#include <thread>
 
 #include "common/sys_cmd.h"
 #include "setup_cmd.h"
@@ -205,6 +206,7 @@ void initCmd(CmdMgr &cmdMgr, FanMgr &fanMgr)
 	Cmd *setStaticCompressionCmd = new SetStaticCompressionCmd("set_static_compression", &fanMgr);
 	Cmd *setDynamicCompressionCmd = new SetDynamicCompressionCmd("set_dynamic_compression", &fanMgr);
 	Cmd *setXFillCmd = new SetXFillCmd("set_X-Fill", &fanMgr);
+	Cmd *setScanProtocolCmd = new SetScanProtocolCmd("set_scan_protocol", &fanMgr);
 	Cmd *setNonscanFfCmd = new SetNonscanFfCmd("set_nonscan_ff", &fanMgr);
 
 	// set_per_target_timeout <seconds>
@@ -228,6 +230,36 @@ void initCmd(CmdMgr &cmdMgr, FanMgr &fanMgr)
 	};
 	Cmd *setPerTargetTimeoutCmd = new SetPerTargetTimeoutCmd("set_per_target_timeout", &fanMgr);
 
+	class SetAtpgThreadsCmd : public CommonNs::Cmd {
+	public:
+		SetAtpgThreadsCmd(const std::string &name, FanMgr *fm) : Cmd(name) { fm_ = fm; }
+		bool exec(const std::vector<std::string> &argv) override {
+			if (argv.size() < 2) {
+				std::cerr << "**ERROR usage: set_atpg_threads <N>  (1=sequential, 0=auto)\n";
+				return false;
+			}
+			int n;
+			try { n = std::stoi(argv[1]); }
+			catch (...) { std::cerr << "**ERROR invalid thread count: " << argv[1] << "\n"; return false; }
+			if (n == 0) {
+				n = static_cast<int>(std::thread::hardware_concurrency());
+				if (n < 1) n = 1;
+			}
+			if (n < 1) {
+				std::cerr << "**ERROR thread count must be >= 1\n";
+				return false;
+			}
+			fm_->atpgThreads_ = n;
+			if (fm_->atpg) {
+				fm_->atpg->setNumThreads(n);
+			}
+			std::cout << "#  ATPG parallel workers set to " << n << "\n";
+			return true;
+		}
+	private: FanMgr *fm_;
+	};
+	Cmd *setAtpgThreadsCmd = new SetAtpgThreadsCmd("set_atpg_threads", &fanMgr);
+
 	cmdMgr.regCmd("SETUP", readLibCmd);
 	cmdMgr.regCmd("SETUP", readNlCmd);
 	cmdMgr.regCmd("SETUP", setFaultTypeCmd);
@@ -239,8 +271,10 @@ void initCmd(CmdMgr &cmdMgr, FanMgr &fanMgr)
 	cmdMgr.regCmd("SETUP", setStaticCompressionCmd);
 	cmdMgr.regCmd("SETUP", setDynamicCompressionCmd);
 	cmdMgr.regCmd("SETUP", setXFillCmd);
+	cmdMgr.regCmd("SETUP", setScanProtocolCmd);
 	cmdMgr.regCmd("SETUP", setNonscanFfCmd);
 	cmdMgr.regCmd("SETUP", setPerTargetTimeoutCmd);
+	cmdMgr.regCmd("SETUP", setAtpgThreadsCmd);
 
 	// ATPG commands
 	Cmd *readPatCmd = new ReadPatCmd("read_pattern", &fanMgr);

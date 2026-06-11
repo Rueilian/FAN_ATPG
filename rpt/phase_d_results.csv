@@ -1,6 +1,9 @@
-circuit,change,fc_pct,au,dt,collapsed,patterns,notes
-b03,phase_c_baseline,34.75,948,538,1112,12,PO/PPO fix only
-b03,phase_d_mux2_atomic_fan,75.39,189,769,881,6,b03_fs.script with compression
-b03,phase_d_mux2_atomic_cpp,80.14,113,706,881,-,phase_d_test with compression
-s510,phase_d_mux2_atomic,99.14,0,,-,-,no regression
-tiny_sdffr,phase_d_mux2_atomic,91.67,0,22,24,-,phase_c regression pass
+circuit,change,fc_scan_pct,fc_raw_pct,au,au_comb,dt,collapsed,patterns,notes
+b03,phase_c_baseline,34.75,34.75,948,948,538,1112,12,PO/PPO fix only; raw=scan
+b03,phase_d_mux2_atomic_fan,75.39,75.39,189,189,769,881,6,pre scan-protocol metric
+b03,phase_d_mux2_atomic_cpp,80.14,80.14,113,113,706,881,-,phase_d_test mid-point
+b03,phase_d_full_d32,92.83,92.83,4,2,854,853,9,D3.2 raw FC
+b03,phase_d_scan_protocol,93.03,92.83,2,2,854,853,9,b03.v auto scan protocol
+b03,phase_d_reset_tie,92.97,92.97,3,2,859,855,9,b03_reset_tie.v primary netlist
+s510,phase_d_scan_protocol,99.14,99.14,0,0,1390,946,70,no regression
+tiny_sdffr,phase_d_scan_protocol,91.67,91.67,0,0,22,24,0,phase_c regression pass

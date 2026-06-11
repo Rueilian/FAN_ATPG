@@ -8,6 +8,9 @@
 #include "atpg.h"
 #include <algorithm>
 #include <chrono>
+#include <mutex>
+#include <thread>
+#include <unordered_map>
 
 using namespace CoreNs;
 
@@ -68,6 +71,12 @@ inline Fault mapSafToObservationFrame(const Circuit *pCircuit, const Fault &faul
 // **************************************************************************
 void Atpg::generatePatternSet(PatternProcessor *pPatternProcessor, FaultListExtract *pFaultListExtractor, bool isMFO)
 {
+	if (numThreads_ > 1 && !isMFO)
+	{
+		generatePatternSetParallel(pPatternProcessor, pFaultListExtractor);
+		return;
+	}
+
 	Fault *pCurrentFault = NULL;
 	FaultPtrList originalFaultPtrList, faultPtrListForSTC;
 	setupCircuitParameter();
@@ -76,13 +85,15 @@ void Atpg::generatePatternSet(PatternProcessor *pPatternProcessor, FaultListExtr
 	// setting faults for running ATPG
 	for (Fault *pFault : pFaultListExtractor->faultsInCircuit_)
 	{
-		const bool faultIsQualified = (pFault->faultState_ != Fault::DT && pFault->faultState_ != Fault::RE && pFault->faultyLine_ >= 0);
+		const bool faultIsQualified = (pFault->faultState_ != Fault::DT && pFault->faultState_ != Fault::RE
+		                               && pFault->faultState_ != Fault::TI && pFault->faultyLine_ >= 0);
 		if (faultIsQualified)
 		{
 			originalFaultPtrList.push_back(pFault);
 			faultPtrListForSTC.push_back(pFault);
 		}
 	}
+	sortFaultListFanInCone(originalFaultPtrList);
 
 	// testClearFaultEffect(originalFaultPtrList); // only used for debug
 
@@ -633,7 +644,281 @@ void Atpg::TransitionDelayFaultATPG(FaultPtrList &faultPtrListForGen, PatternPro
 //            ]
 // Date       [ started 2020/07/07    last modified 2023/01/05 ]
 // **************************************************************************
-void Atpg::StuckAtFaultATPG(FaultPtrList &faultPtrListForGen, PatternProcessor *pPatternProcessor, int &numOfAtpgUntestableFaults)
+void Atpg::setNumThreads(int n)
+{
+	if (n <= 0)
+	{
+		const unsigned hc = std::thread::hardware_concurrency();
+		numThreads_ = (hc > 0) ? static_cast<int>(hc) : 1;
+	}
+	else
+	{
+		numThreads_ = n;
+	}
+}
+
+bool Atpg::multipleBacktracePropagateFanin(Gate *pFaninGate, int nn0, int nn1, int &possibleFinalObjectiveID)
+{
+	if ((nn0 <= 0 && nn1 <= 0) || pFaninGate->atpgVal_ != X)
+	{
+		return true;
+	}
+	if (pFaninGate->gateType_ == Gate::TIEX || pFaninGate->gateType_ == Gate::TIEZ)
+	{
+		possibleFinalObjectiveID = -1;
+		return false;
+	}
+	if (pFaninGate->numFO_ > 1)
+	{
+		if (gateID_to_n0_[pFaninGate->gateId_] == 0 && gateID_to_n1_[pFaninGate->gateId_] == 0)
+		{
+			fanoutObjectives_.push_back(pFaninGate->gateId_);
+		}
+		setGaten0n1(pFaninGate->gateId_, gateID_to_n0_[pFaninGate->gateId_] + nn0, gateID_to_n1_[pFaninGate->gateId_] + nn1);
+		gateIDsToResetAfterBackTrace_.push_back(pFaninGate->gateId_);
+	}
+	else
+	{
+		setGaten0n1(pFaninGate->gateId_, nn0, nn1);
+		gateIDsToResetAfterBackTrace_.push_back(pFaninGate->gateId_);
+		currentObjectives_.push_back(pFaninGate->gateId_);
+	}
+	return true;
+}
+
+int Atpg::fanInConeSize(const Fault *fault) const
+{
+	if (fault == nullptr || fault->gateID_ < 0 || fault->gateID_ >= pCircuit_->totalGate_)
+	{
+		return INFINITE;
+	}
+	const Fault mapped = mapSafToObservationFrame(pCircuit_, *fault);
+	int startGate = mapped.gateID_;
+	const Gate &faultyGate = pCircuit_->circuitGates_[mapped.gateID_];
+	if (mapped.faultyLine_ > 0 && mapped.faultyLine_ <= faultyGate.numFI_)
+	{
+		startGate = faultyGate.faninVector_[mapped.faultyLine_ - 1];
+	}
+	if (startGate < 0 || startGate >= pCircuit_->totalGate_)
+	{
+		return INFINITE;
+	}
+
+	std::vector<uint8_t> visited(static_cast<size_t>(pCircuit_->totalGate_), 0);
+	std::vector<int> stack;
+	stack.reserve(64);
+	stack.push_back(startGate);
+	visited[static_cast<size_t>(startGate)] = 1;
+	int count = 0;
+
+	while (!stack.empty())
+	{
+		const int gateId = stack.back();
+		stack.pop_back();
+		++count;
+		const Gate &gate = pCircuit_->circuitGates_[gateId];
+		for (int fi = 0; fi < gate.numFI_; ++fi)
+		{
+			const int faninId = gate.faninVector_[fi];
+			if (faninId < 0 || faninId >= pCircuit_->totalGate_)
+			{
+				continue;
+			}
+			if (visited[static_cast<size_t>(faninId)] == 0)
+			{
+				visited[static_cast<size_t>(faninId)] = 1;
+				stack.push_back(faninId);
+			}
+		}
+	}
+	return count;
+}
+
+void Atpg::sortFaultListFanInCone(FaultPtrList &faultList) const
+{
+	std::unordered_map<const Fault *, int> coneSize;
+	coneSize.reserve(faultList.size() * 2);
+	for (const Fault *f : faultList)
+	{
+		coneSize.emplace(f, fanInConeSize(f));
+	}
+
+	auto gateLevel = [this](const Fault *f) {
+		if (f->gateID_ < 0 || f->gateID_ >= pCircuit_->totalGate_)
+		{
+			return INFINITE;
+		}
+		return pCircuit_->circuitGates_[f->gateID_].numLevel_;
+	};
+
+	faultList.sort([&](const Fault *a, const Fault *b) {
+		const int ca = coneSize.at(a);
+		const int cb = coneSize.at(b);
+		if (ca != cb)
+		{
+			return ca < cb;
+		}
+		const int la = gateLevel(a);
+		const int lb = gateLevel(b);
+		if (la != lb)
+		{
+			return la < lb;
+		}
+		if (a->gateID_ != b->gateID_)
+		{
+			return a->gateID_ < b->gateID_;
+		}
+		return a->faultyLine_ < b->faultyLine_;
+	});
+}
+
+void Atpg::globalFaultDropAfterPattern(PatternProcessor *pPatternProcessor, FaultPtrList &remainingFaults)
+{
+	if (pPatternProcessor->patternVector_.empty())
+	{
+		return;
+	}
+	Pattern &pat = pPatternProcessor->patternVector_.back();
+	pSimulator_->assignPatternToCircuitInputs(pat);
+	pSimulator_->parallelFaultFaultSimWithOnePattern(pat, remainingFaults);
+	pSimulator_->goodSim();
+	writeGoodSimValToPatternPO(pat);
+}
+
+namespace CoreNs
+{
+struct ParallelAtpgShared
+{
+	std::mutex mu;
+	PatternProcessor *globalPP = nullptr;
+	Circuit *masterCircuit = nullptr;
+	Simulator *masterSim = nullptr;
+	Atpg *masterAtpg = nullptr;
+	FaultPtrList *remainingFaults = nullptr;
+	double perTargetTimeout = 0.0;
+};
+
+void parallelAtpgWorker(ParallelAtpgShared *shared, FaultPtrList bucket, Circuit circuitTemplate)
+{
+	Circuit local = circuitTemplate;
+	Simulator localSim(&local);
+	Atpg localAtpg(&local, &localSim);
+	localAtpg.setPerTargetTimeoutSec(shared->perTargetTimeout);
+
+	PatternProcessor localPP;
+	localPP.init(&local);
+	localPP.staticCompression_ = shared->globalPP->staticCompression_;
+	localPP.dynamicCompression_ = shared->globalPP->dynamicCompression_;
+	localPP.XFill_ = shared->globalPP->XFill_;
+
+	FaultPtrList work = bucket;
+	Fault *pCurrentFault = nullptr;
+	int numOfAtpgUntestableFaults = 0;
+
+	while (!work.empty())
+	{
+		{
+			std::lock_guard<std::mutex> lock(shared->mu);
+			if (work.front()->faultState_ == Fault::AB)
+			{
+				break;
+			}
+			if (work.front()->faultState_ == Fault::DT || work.front()->faultState_ == Fault::AU ||
+			    work.front()->faultState_ == Fault::TO || work.front()->faultState_ == Fault::TI)
+			{
+				work.pop_front();
+				pCurrentFault = nullptr;
+				continue;
+			}
+			if (pCurrentFault == work.front())
+			{
+				work.front()->faultState_ = Fault::DT;
+				work.pop_front();
+				pCurrentFault = nullptr;
+				continue;
+			}
+		}
+
+		pCurrentFault = work.front();
+		const size_t patBefore = localPP.patternVector_.size();
+		localAtpg.StuckAtFaultATPG(work, &localPP, numOfAtpgUntestableFaults, true);
+
+		if (localPP.patternVector_.size() > patBefore)
+		{
+			std::lock_guard<std::mutex> lock(shared->mu);
+			shared->globalPP->patternVector_.push_back(localPP.patternVector_.back());
+			shared->masterAtpg->globalFaultDropAfterPattern(shared->globalPP, *shared->remainingFaults);
+			localPP.patternVector_.pop_back();
+		}
+	}
+}
+}
+
+void Atpg::generatePatternSetParallel(PatternProcessor *pPatternProcessor, FaultListExtract *pFaultListExtractor)
+{
+	FaultPtrList originalFaultPtrList, faultPtrListForSTC;
+	setupCircuitParameter();
+	pPatternProcessor->init(pCircuit_);
+
+	for (Fault *pFault : pFaultListExtractor->faultsInCircuit_)
+	{
+		const bool faultIsQualified = (pFault->faultState_ != Fault::DT && pFault->faultState_ != Fault::RE
+		                               && pFault->faultState_ != Fault::TI && pFault->faultyLine_ >= 0);
+		if (faultIsQualified)
+		{
+			originalFaultPtrList.push_back(pFault);
+			faultPtrListForSTC.push_back(pFault);
+		}
+	}
+	sortFaultListFanInCone(originalFaultPtrList);
+
+	const int nWorkers = std::min(numThreads_, static_cast<int>(originalFaultPtrList.size()));
+	if (nWorkers <= 1)
+	{
+		numThreads_ = 1;
+		generatePatternSet(pPatternProcessor, pFaultListExtractor, false);
+		return;
+	}
+
+	std::vector<FaultPtrList> buckets(static_cast<size_t>(nWorkers));
+	size_t idx = 0;
+	for (Fault *pFault : originalFaultPtrList)
+	{
+		buckets[idx % static_cast<size_t>(nWorkers)].push_back(pFault);
+		++idx;
+	}
+
+	pPatternProcessor->patternVector_.clear();
+	pPatternProcessor->patternVector_.reserve(MAX_LIST_SIZE);
+
+	ParallelAtpgShared shared;
+	shared.globalPP = pPatternProcessor;
+	shared.masterCircuit = pCircuit_;
+	shared.masterSim = pSimulator_;
+	shared.masterAtpg = this;
+	shared.remainingFaults = &originalFaultPtrList;
+	shared.perTargetTimeout = perTargetTimeoutSec_;
+
+	const Circuit circuitTemplate = *pCircuit_;
+	std::vector<std::thread> workers;
+	workers.reserve(static_cast<size_t>(nWorkers));
+	for (int w = 0; w < nWorkers; ++w)
+	{
+		workers.emplace_back(parallelAtpgWorker, &shared, buckets[static_cast<size_t>(w)], circuitTemplate);
+	}
+	for (std::thread &t : workers)
+	{
+		t.join();
+	}
+
+	if (pPatternProcessor->staticCompression_ == PatternProcessor::ON)
+	{
+		staticTestCompressionByReverseFaultSimulation(pPatternProcessor, faultPtrListForSTC);
+		originalFaultPtrList = faultPtrListForSTC;
+	}
+}
+
+void Atpg::StuckAtFaultATPG(FaultPtrList &faultPtrListForGen, PatternProcessor *pPatternProcessor, int &numOfAtpgUntestableFaults, bool deferFaultDrop)
 {
 	const Fault mappedTargetFault = mapSafToObservationFrame(pCircuit_, *faultPtrListForGen.front());
 	SINGLE_PATTERN_GENERATION_STATUS result = generateSinglePatternOnTargetFault(mappedTargetFault, false);
@@ -718,17 +1003,10 @@ void Atpg::StuckAtFaultATPG(FaultPtrList &faultPtrListForGen, PatternProcessor *
 			randomFill(pPatternProcessor->patternVector_.back());
 		}
 
-		//  This function will assign pi/ppi stored in pats_.back() to
-		//  the gh_ and gl_ in each gate, and then it will run fault
-		//  simulation to drop fault.
-
-		pSimulator_->parallelFaultFaultSimWithOnePattern(pPatternProcessor->patternVector_.back(), faultPtrListForGen);
-
-		// After pSimulator_->parallelFaultFaultSimWithOnePattern(pPatternProcessor->patternVector_.back(),faultListToGen) , the pi/ppi
-		// values have been passed to gh_ and gl_ of each gate.  Therefore, we can
-		// directly use "writeGoodSimValToPatternPO" to perform goodSim to get the PoValue.
-		pSimulator_->goodSim();
-		writeGoodSimValToPatternPO(pPatternProcessor->patternVector_.back());
+		if (!deferFaultDrop)
+		{
+			globalFaultDropAfterPattern(pPatternProcessor, faultPtrListForGen);
+		}
 	}
 	else if (result == FAULT_UNTESTABLE)
 	{
@@ -1213,21 +1491,28 @@ Atpg::SINGLE_PATTERN_GENERATION_STATUS Atpg::generateSinglePatternOnTargetFault(
 				// Unique Sensitization fail
 				if (backwardImplicationLevel == UNIQUE_PATH_SENSITIZE_FAIL)
 				{
-					// Treat unique-path failure as a local dead end. In the TIEX
-					// case the d-frontier may remain structurally present, so a
-					// blind continue can spin on the same impossible path forever.
+					// Phase D.3: unique sensitization can fail on MUX/select paths
+					// even when a non-unique objective still propagates the fault.
 					clearAllEvents();
-					if (backtrack(backwardImplicationLevel))
+					if (!findFinalObjective(backtraceFlag, faultHasPropagatedToPO, pLastDFrontier))
 					{
-						backtraceFlag = INITIAL;
-						implicationStatus = (backwardImplicationLevel > 0) ? BACKWARD : FORWARD;
-						pLastDFrontier = NULL;
+						if (backtrack(backwardImplicationLevel))
+						{
+							backtraceFlag = INITIAL;
+							implicationStatus = (backwardImplicationLevel > 0) ? BACKWARD : FORWARD;
+							pLastDFrontier = NULL;
+						}
+						else
+						{
+							genStatus = FAULT_UNTESTABLE;
+							Finish = true;
+						}
 					}
-							else
-							{
-								genStatus = FAULT_UNTESTABLE;
-								Finish = true;
-							}
+					else
+					{
+						assignAtpgValToFinalObjectiveGates();
+						implicationStatus = FORWARD;
+					}
 					continue;
 				}
 				// Unique Sensitization success
@@ -1376,10 +1661,44 @@ Atpg::SINGLE_PATTERN_GENERATION_STATUS Atpg::generateSinglePatternOnTargetFault(
 //            ]
 // Date       [ last modified 2023/01/05 ]
 // **************************************************************************
+Gate *Atpg::initializePiDirectActivation(const Fault &targetFault, int piGateId,
+                                           int &backwardImplicationLevel, IMPLICATION_STATUS &implicationStatus,
+                                           bool isAtStageDTC)
+{
+	Gate *gPi = &pCircuit_->circuitGates_[piGateId];
+	initializeObjectivesAndFrontiers();
+	initializeCircuitWithFaultyGate(*gPi, isAtStageDTC);
+
+	if ((targetFault.faultType_ == Fault::SA0 || targetFault.faultType_ == Fault::STR) && gPi->atpgVal_ != L)
+	{
+		gPi->atpgVal_ = D;
+	}
+	if ((targetFault.faultType_ == Fault::SA1 || targetFault.faultType_ == Fault::STF) && gPi->atpgVal_ != H)
+	{
+		gPi->atpgVal_ = B;
+	}
+	backtrackImplicatedGateIDs_.push_back(piGateId);
+	currentTargetFault_ = targetFault;
+	currentTargetHeadLineFault_ = targetFault;
+	backwardImplicationLevel = 0;
+	implicationStatus = FORWARD;
+	dFrontiers_.push_back(piGateId);
+	return gPi;
+}
+
+// **************************************************************************
+// Function   [ Atpg::initializeForSinglePatternGeneration ]
+// **************************************************************************
 Gate *Atpg::initializeForSinglePatternGeneration(Fault &targetFault, int &backwardImplicationLevel, IMPLICATION_STATUS &implicationStatus, const bool &isAtStageDTC)
 {
 	Gate *gFaultyLine = &pCircuit_->circuitGates_[targetFault.gateID_];
 	currentTargetFault_ = targetFault;
+
+	int piSourceGateId = -1;
+	if (gFaultyLine->gateType_ == Gate::PI && targetFault.faultyLine_ == 0)
+	{
+		piSourceGateId = targetFault.gateID_;
+	}
 
 	// if targetFault at gate's input, change the gFaultyLine to the input gate
 	if (targetFault.faultyLine_ != 0)
@@ -1415,6 +1734,11 @@ Gate *Atpg::initializeForSinglePatternGeneration(Fault &targetFault, int &backwa
 
 	if (backwardImplicationLevel < 0)
 	{
+		if (piSourceGateId >= 0)
+		{
+			return initializePiDirectActivation(targetFault, piSourceGateId, backwardImplicationLevel,
+			                                  implicationStatus, isAtStageDTC);
+		}
 		return NULL;
 	}
 
@@ -1423,10 +1747,23 @@ Gate *Atpg::initializeForSinglePatternGeneration(Fault &targetFault, int &backwa
 	int Level = doUniquePathSensitization(pCircuit_->circuitGates_[fGate_id]);
 	if (Level == UNIQUE_PATH_SENSITIZE_FAIL)
 	{
-		return NULL;
+		if (pCircuit_->circuitGates_[fGate_id].gateType_ == Gate::PI)
+		{
+			implicationStatus = FORWARD;
+		}
+		else if (piSourceGateId >= 0)
+		{
+			return initializePiDirectActivation(targetFault, piSourceGateId, backwardImplicationLevel,
+			                                  implicationStatus, isAtStageDTC);
+		}
+		else
+		{
+			// Phase D.4: unique sensitization may fail on MUX/select paths at init;
+			// let the main PODEM loop try findFinalObjective instead of AU.
+			implicationStatus = FORWARD;
+		}
 	}
-
-	if (Level > backwardImplicationLevel)
+	else if (Level > backwardImplicationLevel)
 	{
 		backwardImplicationLevel = Level;
 		implicationStatus = BACKWARD;
@@ -1901,6 +2238,48 @@ Atpg::IMPLICATION_STATUS Atpg::doOneGateBackwardImplication(Gate *pGate)
 				pushGateFanoutsToEventStack(pGate->faninVector_[1]);
 			}
 			else if (pGate->atpgVal_ == X)
+			{
+				unjustifiedGateIDs_.push_back(pGate->gateId_);
+				implicationStatus = FORWARD;
+			}
+		}
+		else if (pGate->atpgVal_ != X)
+		{
+			if (pA->atpgVal_ == pGate->atpgVal_ && pB->atpgVal_ == X)
+			{
+				if (isUncontrollableSource(pB))
+				{
+					return CONFLICT;
+				}
+				pS->atpgVal_ = L;
+				pB->atpgVal_ = (pA->atpgVal_ == H) ? L : H;
+				gateID_to_valModified_[pGate->gateId_] = 1;
+				backtrackImplicatedGateIDs_.push_back(pS->gateId_);
+				backtrackImplicatedGateIDs_.push_back(pB->gateId_);
+				pushGateToEventStack(pGate->faninVector_[2]);
+				pushGateFanoutsToEventStack(pGate->faninVector_[2]);
+				pushGateToEventStack(pGate->faninVector_[1]);
+				pushGateFanoutsToEventStack(pGate->faninVector_[1]);
+				implicationStatus = BACKWARD;
+			}
+			else if (pB->atpgVal_ == pGate->atpgVal_ && pA->atpgVal_ == X)
+			{
+				if (isUncontrollableSource(pA))
+				{
+					return CONFLICT;
+				}
+				pS->atpgVal_ = H;
+				pA->atpgVal_ = (pB->atpgVal_ == H) ? L : H;
+				gateID_to_valModified_[pGate->gateId_] = 1;
+				backtrackImplicatedGateIDs_.push_back(pS->gateId_);
+				backtrackImplicatedGateIDs_.push_back(pA->gateId_);
+				pushGateToEventStack(pGate->faninVector_[2]);
+				pushGateFanoutsToEventStack(pGate->faninVector_[2]);
+				pushGateToEventStack(pGate->faninVector_[0]);
+				pushGateFanoutsToEventStack(pGate->faninVector_[0]);
+				implicationStatus = BACKWARD;
+			}
+			else
 			{
 				unjustifiedGateIDs_.push_back(pGate->gateId_);
 				implicationStatus = FORWARD;
@@ -2876,13 +3255,30 @@ int Atpg::doUniquePathSensitization(Gate &gate)
 			for (int i = 0; i < gate.numFI_; ++i)
 			{
 				Gate *pFaninGate = &pCircuit_->circuitGates_[gate.faninVector_[i]];
+				if (gate.gateType_ == Gate::MUX && gate.numFI_ >= 3)
+				{
+					Gate *pS = &pCircuit_->circuitGates_[gate.faninVector_[2]];
+					if (i == 0 && pS->atpgVal_ == H)
+					{
+						continue;
+					}
+					if (i == 1 && pS->atpgVal_ == L)
+					{
+						continue;
+					}
+				}
 				if (pFaninGate->atpgVal_ == X)
 				{
 					if (isUncontrollableSource(pFaninGate))
 					{
 						return UNIQUE_PATH_SENSITIZE_FAIL;
 					}
-					pFaninGate->atpgVal_ = NonControlVal;
+					Value assignVal = NonControlVal;
+					if (gate.gateType_ == Gate::MUX && gate.numFI_ >= 3 && i == 2)
+					{
+						assignVal = L;
+					}
+					pFaninGate->atpgVal_ = assignVal;
 					if (backwardImplicationLevel < pFaninGate->numLevel_) // backwardImplicationLevel becomes MAX of fan in level
 					{
 						backwardImplicationLevel = pFaninGate->numLevel_;
@@ -2892,7 +3288,7 @@ int Atpg::doUniquePathSensitization(Gate &gate)
 					pushGateToEventStack(gate.faninVector_[i]);
 					pushGateFanoutsToEventStack(gate.faninVector_[i]);
 				}
-				else if (pFaninGate->atpgVal_ == gate.getInputCtrlValue())
+				else if (gate.gateType_ != Gate::MUX && pFaninGate->atpgVal_ == gate.getInputCtrlValue())
 				{
 					return UNIQUE_PATH_SENSITIZE_FAIL;
 				}
@@ -2945,7 +3341,19 @@ int Atpg::doUniquePathSensitization(Gate &gate)
 				{
 					Gate *pFaninGate = &pCircuit_->circuitGates_[pNextGate->faninVector_[i]];
 
-					if (pFaninGate != pCurrGate && pNextGate->getInputCtrlValue() != X && pFaninGate->atpgVal_ == pNextGate->getInputCtrlValue())
+					if (pNextGate->gateType_ == Gate::MUX && pNextGate->numFI_ >= 3)
+					{
+						Gate *pS = &pCircuit_->circuitGates_[pNextGate->faninVector_[2]];
+						if (i == 0 && pS->atpgVal_ == H)
+						{
+							continue;
+						}
+						if (i == 1 && pS->atpgVal_ == L)
+						{
+							continue;
+						}
+					}
+					else if (pFaninGate != pCurrGate && pNextGate->getInputCtrlValue() != X && pFaninGate->atpgVal_ == pNextGate->getInputCtrlValue())
 					{
 						return UNIQUE_PATH_SENSITIZE_FAIL;
 					}
@@ -2956,7 +3364,12 @@ int Atpg::doUniquePathSensitization(Gate &gate)
 						{
 							return UNIQUE_PATH_SENSITIZE_FAIL;
 						}
-						pFaninGate->atpgVal_ = NonControlVal; // Set input gate of pNextGate to pNextGate's NonControlVal
+						Value assignVal = NonControlVal;
+						if (pNextGate->gateType_ == Gate::MUX && pNextGate->numFI_ >= 3 && i == 2)
+						{
+							assignVal = L;
+						}
+						pFaninGate->atpgVal_ = assignVal;
 						if (backwardImplicationLevel < pFaninGate->numLevel_)
 						{
 							backwardImplicationLevel = pFaninGate->numLevel_;
@@ -2989,7 +3402,19 @@ int Atpg::doUniquePathSensitization(Gate &gate)
 
 					if (!DependOnCurrent)
 					{
-						if (pFaninGate->atpgVal_ != X && pFaninGate->atpgVal_ == pNextGate->getInputCtrlValue() && pNextGate->getInputCtrlValue() != X)
+						if (pNextGate->gateType_ == Gate::MUX && pNextGate->numFI_ >= 3)
+						{
+							Gate *pS = &pCircuit_->circuitGates_[pNextGate->faninVector_[2]];
+							if (i == 0 && pS->atpgVal_ == H)
+							{
+								continue;
+							}
+							if (i == 1 && pS->atpgVal_ == L)
+							{
+								continue;
+							}
+						}
+						else if (pFaninGate->atpgVal_ != X && pFaninGate->atpgVal_ == pNextGate->getInputCtrlValue() && pNextGate->getInputCtrlValue() != X)
 						{
 							return UNIQUE_PATH_SENSITIZE_FAIL;
 						}
@@ -3003,7 +3428,12 @@ int Atpg::doUniquePathSensitization(Gate &gate)
 						{
 							return UNIQUE_PATH_SENSITIZE_FAIL;
 						}
-						pFaninGate->atpgVal_ = NonControlVal; // set to NonControlVal
+						Value assignVal = NonControlVal;
+						if (pNextGate->gateType_ == Gate::MUX && pNextGate->numFI_ >= 3 && i == 2)
+						{
+							assignVal = L;
+						}
+						pFaninGate->atpgVal_ = assignVal;
 
 						if (backwardImplicationLevel < pFaninGate->numLevel_)
 						{
@@ -3071,9 +3501,11 @@ bool Atpg::xPathExists(Gate *pGate)
 // **************************************************************************
 bool Atpg::xPathTracing(Gate *pGate)
 {
-	if (pGate->atpgVal_ != X || gateID_to_xPathStatus_[pGate->gateId_] == NO_XPATH_EXIST)
+	// Phase D.2: structural reachability to PO/PPO — do not require atpgVal==X on
+	// intermediate gates. Requiring X caused false empty D-frontiers after init
+	// assignments (setFreeLineFaultyGate / unique sensitization).
+	if (gateID_to_xPathStatus_[pGate->gateId_] == NO_XPATH_EXIST)
 	{
-		gateID_to_xPathStatus_[pGate->gateId_] = NO_XPATH_EXIST;
 		return false;
 	}
 
@@ -3232,6 +3664,109 @@ int Atpg::setFaultyGate(Fault &fault)
 			pFaultyGate->atpgVal_ = cXOR2(valueTemp, FaultyValue);
 			backtrackImplicatedGateIDs_.push_back(pFaultyGate->gateId_);
 		}
+		else if (pFaultyGate->gateType_ == Gate::MUX && pFaultyGate->numFI_ >= 3)
+		{
+			// Phase D.4: MUX2 input faults — select path and propagate D/B to output.
+			Gate *pA = &pCircuit_->circuitGates_[pFaultyGate->faninVector_[0]];
+			Gate *pB = &pCircuit_->circuitGates_[pFaultyGate->faninVector_[1]];
+			Gate *pS = &pCircuit_->circuitGates_[pFaultyGate->faninVector_[2]];
+			const int faultIdx = fault.faultyLine_ - 1; // 0=A, 1=B, 2=S
+
+			auto justifyMuxSideInput = [&](Gate *pSide) -> bool {
+				if (pSide->atpgVal_ != X)
+				{
+					return true;
+				}
+				if (isUncontrollableSource(pSide))
+				{
+					return false;
+				}
+				pSide->atpgVal_ = H;
+				backtrackImplicatedGateIDs_.push_back(pSide->gateId_);
+				return true;
+			};
+
+			if (faultIdx == 0)
+			{
+				if (pS->atpgVal_ == X)
+				{
+					pS->atpgVal_ = L;
+					backtrackImplicatedGateIDs_.push_back(pS->gateId_);
+				}
+				else if (pS->atpgVal_ != L)
+				{
+					return -1;
+				}
+				if (!justifyMuxSideInput(pB))
+				{
+					return -1;
+				}
+				pFaultyGate->atpgVal_ = FaultyValue;
+			}
+			else if (faultIdx == 1)
+			{
+				if (pS->atpgVal_ == X)
+				{
+					pS->atpgVal_ = H;
+					backtrackImplicatedGateIDs_.push_back(pS->gateId_);
+				}
+				else if (pS->atpgVal_ != H)
+				{
+					return -1;
+				}
+				if (!justifyMuxSideInput(pA))
+				{
+					return -1;
+				}
+				pFaultyGate->atpgVal_ = FaultyValue;
+			}
+			else
+			{
+				if (pA->atpgVal_ == X)
+				{
+					if (isUncontrollableSource(pA))
+					{
+						return -1;
+					}
+					pA->atpgVal_ = H;
+					backtrackImplicatedGateIDs_.push_back(pA->gateId_);
+				}
+				if (pB->atpgVal_ == X)
+				{
+					if (isUncontrollableSource(pB))
+					{
+						return -1;
+					}
+					pB->atpgVal_ = L;
+					backtrackImplicatedGateIDs_.push_back(pB->gateId_);
+				}
+				if (pA->atpgVal_ == pB->atpgVal_)
+				{
+					pB->atpgVal_ = (pA->atpgVal_ == H) ? L : H;
+					backtrackImplicatedGateIDs_.push_back(pB->gateId_);
+				}
+				pFaultyGate->atpgVal_ = FaultyValue;
+			}
+			backtrackImplicatedGateIDs_.push_back(pFaultyGate->gateId_);
+		}
+		else if (pFaultyGate->gateType_ == Gate::XOR2 || pFaultyGate->gateType_ == Gate::XNOR2)
+		{
+			for (int i = 0; i < pFaultyGate->numFI_; ++i)
+			{
+				Gate *pFaninGate = &pCircuit_->circuitGates_[pFaultyGate->faninVector_[i]];
+				if (pFaninGate != pFaultyLine && pFaninGate->atpgVal_ == X)
+				{
+					if (isUncontrollableSource(pFaninGate))
+					{
+						return -1;
+					}
+					pFaninGate->atpgVal_ = L;
+					backtrackImplicatedGateIDs_.push_back(pFaninGate->gateId_);
+				}
+			}
+			pFaultyGate->atpgVal_ = FaultyValue;
+			backtrackImplicatedGateIDs_.push_back(pFaultyGate->gateId_);
+		}
 		else if (pFaultyGate->gateType_ == Gate::INV || pFaultyGate->gateType_ == Gate::BUF || pFaultyGate->gateType_ == Gate::PO || pFaultyGate->gateType_ == Gate::PPO)
 		{
 			valueTemp = pFaultyGate->isInverse();
@@ -3299,7 +3834,10 @@ int Atpg::setFaultyGate(Fault &fault)
 				backwardImplicationLevel = pFaninGate->numLevel_;
 			}
 		}
-		else if ((FaultyValue == D && pFaultyGate->getOutputCtrlValue() == H) || (FaultyValue == B && pFaultyGate->getOutputCtrlValue() == L))
+		else if ((FaultyValue == D && pFaultyGate->getOutputCtrlValue() == H) ||
+		         (FaultyValue == B && pFaultyGate->getOutputCtrlValue() == L) ||
+		         (FaultyValue == D && pFaultyGate->getOutputCtrlValue() == L) ||
+		         (FaultyValue == B && pFaultyGate->getOutputCtrlValue() == H))
 		{
 			gateID_to_valModified_[pFaultyGate->gateId_] = 1;
 			// scan all fanin gate of pFaultyGate
@@ -3510,6 +4048,46 @@ void Atpg::fanoutFreeBacktrace(Gate *pGate)
 			}
 			currentObjectives_.push_back(pGate->faninVector_[0]); // add input gate into currentObjectives_ list
 		}
+		else if (pGate->gateType_ == Gate::MUX && pGate->numFI_ >= 3)
+		{
+			// Phase D: MUX2 must not use generic AND/OR backtrace (wrong ctrl semantics).
+			Gate *pA = &pCircuit_->circuitGates_[pGate->faninVector_[0]];
+			Gate *pB = &pCircuit_->circuitGates_[pGate->faninVector_[1]];
+			Gate *pS = &pCircuit_->circuitGates_[pGate->faninVector_[2]];
+			Value Val = cXOR2(pGate->atpgVal_, vInv);
+			if (pS->atpgVal_ == L)
+			{
+				if (!isUncontrollableSource(pA) && pA != firstTimeFrameHeadLine_)
+				{
+					pA->atpgVal_ = Val;
+					currentObjectives_.push_back(pA->gateId_);
+				}
+			}
+			else if (pS->atpgVal_ == H)
+			{
+				if (!isUncontrollableSource(pB) && pB != firstTimeFrameHeadLine_)
+				{
+					pB->atpgVal_ = Val;
+					currentObjectives_.push_back(pB->gateId_);
+				}
+			}
+			else
+			{
+				if (!isUncontrollableSource(pS) && pS != firstTimeFrameHeadLine_)
+				{
+					pS->atpgVal_ = L;
+					currentObjectives_.push_back(pS->gateId_);
+				}
+				if (!isUncontrollableSource(pA) && pA != firstTimeFrameHeadLine_)
+				{
+					if (pA->atpgVal_ == X)
+					{
+						pA->atpgVal_ = Val;
+					}
+					currentObjectives_.push_back(pA->gateId_);
+				}
+			}
+		}
 		else
 		{
 			Value Val = cXOR2(pGate->atpgVal_, vInv);
@@ -3536,7 +4114,8 @@ void Atpg::fanoutFreeBacktrace(Gate *pGate)
 							break;
 						}
 					}
-					if (isUncontrollableSource(pFaninGate))
+					if (pFaninGate == NULL || pFaninGate == firstTimeFrameHeadLine_ ||
+					    isUncontrollableSource(pFaninGate))
 					{
 						continue;
 					}
@@ -3550,7 +4129,8 @@ void Atpg::fanoutFreeBacktrace(Gate *pGate)
 				for (int i = 0; i < pGate->numFI_; ++i)
 				{
 					pFaninGate = &pCircuit_->circuitGates_[pGate->faninVector_[i]];
-					if (isUncontrollableSource(pFaninGate))
+					if (pFaninGate == NULL || pFaninGate == firstTimeFrameHeadLine_ ||
+					    isUncontrollableSource(pFaninGate))
 					{
 						continue;
 					}
@@ -3647,6 +4227,45 @@ Atpg::BACKTRACE_RESULT Atpg::multipleBacktrace(BACKTRACE_STATUS atpgStatus, int 
 					// different Gate return different value, the value used in FindEasiestInput()
 					Value Val = assignBacktraceValue(n0, n1, *pCurrentObj); // get Val,no and n1 of pCurrentObj
 
+					if (pCurrentObj->gateType_ == Gate::MUX && pCurrentObj->numFI_ >= 3)
+					{
+						// Phase D: MUX2 — backtrace only through selected data path (+ select if X).
+						Gate *pA = &pCircuit_->circuitGates_[pCurrentObj->faninVector_[0]];
+						Gate *pB = &pCircuit_->circuitGates_[pCurrentObj->faninVector_[1]];
+						Gate *pS = &pCircuit_->circuitGates_[pCurrentObj->faninVector_[2]];
+						struct MuxFaninTask
+						{
+							Gate *gate;
+							int nn0;
+							int nn1;
+						};
+						std::vector<MuxFaninTask> tasks;
+						if (pS->atpgVal_ == L)
+						{
+							tasks.push_back({pA, n0, n1});
+						}
+						else if (pS->atpgVal_ == H)
+						{
+							tasks.push_back({pB, n0, n1});
+						}
+						else
+						{
+							if (pS->atpgVal_ == X)
+							{
+								tasks.push_back({pS, 1, 0});
+							}
+							tasks.push_back({pA, n0, n1});
+						}
+						for (const MuxFaninTask &task : tasks)
+						{
+							if (!multipleBacktracePropagateFanin(task.gate, task.nn0, task.nn1, possibleFinalObjectiveID))
+							{
+								return CONTRADICTORY;
+							}
+						}
+					}
+					else
+					{
 					// FindEasiestInput() in <atpg.cpp>,
 					// return Gate* of the pCurrentObj's fanin gate that is
 					// the easiest gate to control value to Val
@@ -3771,6 +4390,7 @@ Atpg::BACKTRACE_RESULT Atpg::multipleBacktrace(BACKTRACE_STATUS atpgStatus, int 
 								currentObjectives_.push_back(pFaninGate->gateId_);
 							}
 						}
+					}
 					}
 				}
 				atpgStatus = CHECK_AND_SELECT;
@@ -3953,6 +4573,20 @@ Value Atpg::assignBacktraceValue(int &n0, int &n1, const Gate &gate)
 				n1 = temp;
 			}
 			return X;
+
+		case Gate::MUX:
+			if (gate.numFI_ >= 3)
+			{
+				const Gate &pS = pCircuit_->circuitGates_[gate.faninVector_[2]];
+				n0 = gateID_to_n0_[gate.gateId_];
+				n1 = gateID_to_n1_[gate.gateId_];
+				if (pS.atpgVal_ == X)
+				{
+					return L;
+				}
+				return X;
+			}
+			// fall through
 		default:
 			n0 = gateID_to_n0_[gate.gateId_];
 			n1 = gateID_to_n1_[gate.gateId_];
@@ -4021,6 +4655,9 @@ void Atpg::initializeForMultipleBacktrace()
 				case Gate::XOR3:
 					setGaten0n1(pGate->gateId_, 1, 0);
 					break;
+				case Gate::MUX:
+					setGaten0n1(pGate->gateId_, 1, 0);
+					break;
 				default:
 					break;
 			}
@@ -4059,6 +4696,23 @@ Gate *Atpg::findEasiestInput(Gate *pGate, Value atpgValOfpGate)
 	Gate *pRetGate = NULL;
 	// easiest input gate's scope(non-select yet)
 	int easyControlVal = INFINITE;
+
+	if (pGate->gateType_ == Gate::MUX && pGate->numFI_ >= 3)
+	{
+		Gate *pS = &pCircuit_->circuitGates_[pGate->faninVector_[2]];
+		if (pS->atpgVal_ == X)
+		{
+			return pS;
+		}
+		if (pS->atpgVal_ == L)
+		{
+			return &pCircuit_->circuitGates_[pGate->faninVector_[0]];
+		}
+		if (pS->atpgVal_ == H)
+		{
+			return &pCircuit_->circuitGates_[pGate->faninVector_[1]];
+		}
+	}
 
 	// if the fanIn amount is 1, just return the only fanIn
 	if (pGate->gateType_ == Gate::PO || pGate->gateType_ == Gate::PPO ||

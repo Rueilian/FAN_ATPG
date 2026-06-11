@@ -174,6 +174,8 @@ namespace CoreNs
 		const int fanin2 = pCircuit_->circuitGates_[gateID].numFI_ > 1 ? pCircuit_->circuitGates_[gateID].faninVector_[1] : 0;
 		const int fanin3 = pCircuit_->circuitGates_[gateID].numFI_ > 2 ? pCircuit_->circuitGates_[gateID].faninVector_[2] : 0;
 		const int fanin4 = pCircuit_->circuitGates_[gateID].numFI_ > 3 ? pCircuit_->circuitGates_[gateID].faninVector_[3] : 0;
+		const int fanin5 = pCircuit_->circuitGates_[gateID].numFI_ > 4 ? pCircuit_->circuitGates_[gateID].faninVector_[4] : 0;
+		const int fanin6 = pCircuit_->circuitGates_[gateID].numFI_ > 5 ? pCircuit_->circuitGates_[gateID].faninVector_[5] : 0;
 		// Read the value of fanins.
 		const ParallelValue &l1 = pCircuit_->circuitGates_[fanin1].goodSimLow_;
 		const ParallelValue &h1 = pCircuit_->circuitGates_[fanin1].goodSimHigh_;
@@ -183,6 +185,10 @@ namespace CoreNs
 		const ParallelValue &h3 = pCircuit_->circuitGates_[fanin3].goodSimHigh_;
 		const ParallelValue &l4 = pCircuit_->circuitGates_[fanin4].goodSimLow_;
 		const ParallelValue &h4 = pCircuit_->circuitGates_[fanin4].goodSimHigh_;
+		const ParallelValue &l5 = pCircuit_->circuitGates_[fanin5].goodSimLow_;
+		const ParallelValue &h5 = pCircuit_->circuitGates_[fanin5].goodSimHigh_;
+		const ParallelValue &l6 = pCircuit_->circuitGates_[fanin6].goodSimLow_;
+		const ParallelValue &h6 = pCircuit_->circuitGates_[fanin6].goodSimHigh_;
 		// Evaluate the good value of gate's output.
 		switch (pCircuit_->circuitGates_[gateID].gateType_)
 		{
@@ -327,6 +333,8 @@ namespace CoreNs
 		const int fanin2 = pCircuit_->circuitGates_[gateID].numFI_ > 1 ? pCircuit_->circuitGates_[gateID].faninVector_[1] : 0;
 		const int fanin3 = pCircuit_->circuitGates_[gateID].numFI_ > 2 ? pCircuit_->circuitGates_[gateID].faninVector_[2] : 0;
 		const int fanin4 = pCircuit_->circuitGates_[gateID].numFI_ > 3 ? pCircuit_->circuitGates_[gateID].faninVector_[3] : 0;
+		const int fanin5 = pCircuit_->circuitGates_[gateID].numFI_ > 4 ? pCircuit_->circuitGates_[gateID].faninVector_[4] : 0;
+		const int fanin6 = pCircuit_->circuitGates_[gateID].numFI_ > 5 ? pCircuit_->circuitGates_[gateID].faninVector_[5] : 0;
 		// Read the value of fanins with fault masking.
 		const ParallelValue l1 = (pCircuit_->circuitGates_[fanin1].faultSimLow_ & ~faultInjectHigh_[gateID][1]) | faultInjectLow_[gateID][1];
 		const ParallelValue h1 = (pCircuit_->circuitGates_[fanin1].faultSimHigh_ & ~faultInjectLow_[gateID][1]) | faultInjectHigh_[gateID][1];
@@ -336,6 +344,10 @@ namespace CoreNs
 		const ParallelValue h3 = (pCircuit_->circuitGates_[fanin3].faultSimHigh_ & ~faultInjectLow_[gateID][3]) | faultInjectHigh_[gateID][3];
 		const ParallelValue l4 = (pCircuit_->circuitGates_[fanin4].faultSimLow_ & ~faultInjectHigh_[gateID][4]) | faultInjectLow_[gateID][4];
 		const ParallelValue h4 = (pCircuit_->circuitGates_[fanin4].faultSimHigh_ & ~faultInjectLow_[gateID][4]) | faultInjectHigh_[gateID][4];
+		const ParallelValue l5 = (pCircuit_->circuitGates_[fanin5].faultSimLow_ & ~faultInjectHigh_[gateID][5]) | faultInjectLow_[gateID][5];
+		const ParallelValue h5 = (pCircuit_->circuitGates_[fanin5].faultSimHigh_ & ~faultInjectLow_[gateID][5]) | faultInjectHigh_[gateID][5];
+		const ParallelValue l6 = (pCircuit_->circuitGates_[fanin6].faultSimLow_ & ~faultInjectHigh_[gateID][6]) | faultInjectLow_[gateID][6];
+		const ParallelValue h6 = (pCircuit_->circuitGates_[fanin6].faultSimHigh_ & ~faultInjectLow_[gateID][6]) | faultInjectHigh_[gateID][6];
 		// Evaluate the faulty value of gate's output.
 		switch (pCircuit_->circuitGates_[gateID].gateType_)
 		{

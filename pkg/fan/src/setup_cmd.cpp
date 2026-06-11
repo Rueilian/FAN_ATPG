@@ -493,6 +493,8 @@ bool BuildCircuitCmd::exec(const std::vector<std::string> &argv)
 	if (!fanMgr_->nonscanFfNames.empty()) {
 		fanMgr_->cir->nonscanCellNames_ = fanMgr_->nonscanFfNames;
 	}
+	fanMgr_->scanProtocolApplied_ = false;
+
 	// build circuit
 	fanMgr_->tmusg.periodStart();
 	std::cout << "#  Building circuit ..."
@@ -771,6 +773,59 @@ bool SetXFillCmd::exec(const std::vector<std::string> &argv)
 
 	return true;
 }
+
+SetScanProtocolCmd::SetScanProtocolCmd(const std::string &name, FanMgr *fanMgr) : Cmd(name)
+{
+	fanMgr_ = fanMgr;
+	optMgr_.setName(name);
+	optMgr_.setShortDes("set scan protocol");
+	optMgr_.setDes("enable/disable auto TI marking for async reset/control PIs during full-scan ATPG");
+	optMgr_.regArg(new Arg(Arg::REQ, "either on or off", "on/off"));
+	Opt *opt = new Opt(Opt::BOOL, "print usage", "");
+	opt->addFlag("h");
+	opt->addFlag("help");
+	optMgr_.regOpt(opt);
+}
+
+SetScanProtocolCmd::~SetScanProtocolCmd() {}
+
+bool SetScanProtocolCmd::exec(const std::vector<std::string> &argv)
+{
+	optMgr_.parse(argv);
+
+	if (optMgr_.isFlagSet("h"))
+	{
+		optMgr_.usage();
+		return true;
+	}
+
+	if (optMgr_.getNParsedArg() < 1)
+	{
+		std::cerr << "**ERROR SetScanProtocolCmd::exec(): on/off needed\n";
+		return false;
+	}
+
+	if (optMgr_.getParsedArg(0) == "on")
+	{
+		fanMgr_->scanProtocolEnabled_ = true;
+		fanMgr_->scanProtocolApplied_ = false;
+		std::cout << "#  scan protocol set to on (auto after add_fault --all / run_atpg)\n";
+	}
+	else if (optMgr_.getParsedArg(0) == "off")
+	{
+		fanMgr_->scanProtocolEnabled_ = false;
+		std::cout << "#  scan protocol set to off (raw FC appendix mode)\n";
+	}
+	else
+	{
+		std::cerr << "**ERROR SetScanProtocolCmd::exec(): unknown argument `";
+		std::cerr << optMgr_.getParsedArg(0) << "'\n";
+		return false;
+	}
+
+	return true;
+}
+
 SetNonscanFfCmd::SetNonscanFfCmd(const std::string &name, FanMgr *fanMgr) : Cmd(name)
 {
 	fanMgr_ = fanMgr;

@@ -32,6 +32,9 @@ OWNPKGS = $(STAPKGS) $(DYNPKGS)
 core_DEP = interface
 fan_DEP = common interface core
 
+fan_OPTEXT = pthread
+core_OPTEXT = pthread
+
 # To specify sources containing main function
 #        test1_EXE = hello.cpp route.cpp  // hello.cpp and route.cpp in test1
 #                                         // contain main function

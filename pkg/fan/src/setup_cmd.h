@@ -148,6 +148,17 @@ public:
 private:
     FanMgr *fanMgr_;
 };
+
+class SetScanProtocolCmd : public CommonNs::Cmd {
+public:
+         SetScanProtocolCmd(const std::string &name, FanMgr *fanMgr);
+         ~SetScanProtocolCmd();
+
+    bool exec(const std::vector<std::string> &argv);
+
+private:
+    FanMgr *fanMgr_;
+};
 //Ne
 
 

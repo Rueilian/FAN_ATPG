@@ -19,6 +19,9 @@
 
 namespace CoreNs
 {
+	struct ParallelAtpgShared;
+	void parallelAtpgWorker(ParallelAtpgShared *shared, FaultPtrList bucket, Circuit circuitTemplate);
+
 	constexpr int BACKTRACK_LIMIT = 5000;
 	constexpr int INFINITE = 0x7fffffff;
 	constexpr int MAX_LIST_SIZE = 1000;
@@ -27,6 +30,8 @@ namespace CoreNs
 
 	class Atpg
 	{
+		friend void parallelAtpgWorker(ParallelAtpgShared *shared, FaultPtrList bucket, Circuit circuitTemplate);
+
 	public:
 		inline Atpg(Circuit *pCircuit, Simulator *pSimulator);
 
@@ -73,8 +78,11 @@ namespace CoreNs
 		void calSCOAP();																					// exposed for external use (ScanForge)
 		inline void setPerTargetTimeoutSec(double sec) { perTargetTimeoutSec_ = sec; }
 		inline double perTargetTimeoutSec() const { return perTargetTimeoutSec_; }
+		void setNumThreads(int n);
+		inline int numThreads() const { return numThreads_; }
 
 	private:
+		int numThreads_ = 0;                                         // 0 = auto (all cores) at run_atpg
 		double perTargetTimeoutSec_ = 0.0;                           // per-target-fault wall-clock timeout in seconds; 0=disabled
 		Circuit *pCircuit_;																				// the circuit built on read verilog
 		Simulator *pSimulator_;																		// the simulator based on the built circuit
@@ -112,7 +120,13 @@ namespace CoreNs
 		void identifyGateUniquePath();
 
 		void TransitionDelayFaultATPG(FaultPtrList &faultPtrListForGen, PatternProcessor *pPatternProcessor, int &numOfAtpgUntestableFaults);
-		void StuckAtFaultATPG(FaultPtrList &faultListToGen, PatternProcessor *pPatternProcessor, int &numOfAtpgUntestableFaults);
+		void StuckAtFaultATPG(FaultPtrList &faultListToGen, PatternProcessor *pPatternProcessor, int &numOfAtpgUntestableFaults, bool deferFaultDrop = false);
+
+		int fanInConeSize(const Fault *fault) const;
+		void sortFaultListFanInCone(FaultPtrList &faultList) const;
+		void generatePatternSetParallel(PatternProcessor *pPatternProcessor, FaultListExtract *pFaultListExtractor);
+		void globalFaultDropAfterPattern(PatternProcessor *pPatternProcessor, FaultPtrList &remainingFaults);
+		bool multipleBacktracePropagateFanin(Gate *pFaninGate, int nn0, int nn1, int &possibleFinalObjectiveID);
 
 		Gate *getGateForFaultActivation(const Fault &fault);
 		void setGateAtpgValAndRunImplication(Gate &gate, const Value &val);
@@ -126,6 +140,8 @@ namespace CoreNs
 
 		// initialization at the start of single pattern generation
 		Gate *initializeForSinglePatternGeneration(Fault &targetFault, int &BackImpLevel, IMPLICATION_STATUS &implicationStatus, const bool &isAtStageDTC);
+		Gate *initializePiDirectActivation(const Fault &targetFault, int piGateId, int &backwardImplicationLevel,
+		                                   IMPLICATION_STATUS &implicationStatus, bool isAtStageDTC);
 		void initializeObjectivesAndFrontiers();
 		void initializeCircuitWithFaultyGate(Gate &gFaultyLine, bool isAtStageDTC);
 

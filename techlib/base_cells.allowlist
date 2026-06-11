@@ -1,0 +1,26 @@
+# NanGate45 base-gate synthesis allowlist (combinational + sequential).
+# MUX2 is a base gate; OAI/AOI compound cells are excluded.
+
+# Sequential (dfflibmap)
+DFFR_X1
+DFFR_X2
+DFFRS_X1
+
+# Combinational (ABC mapping, prefer X1)
+INV_X1
+BUF_X1
+AND2_X1
+AND3_X1
+AND4_X1
+OR2_X1
+OR3_X1
+OR4_X1
+NAND2_X1
+NAND3_X1
+NAND4_X1
+NOR2_X1
+NOR3_X1
+NOR4_X1
+XOR2_X1
+XNOR2_X1
+MUX2_X1
