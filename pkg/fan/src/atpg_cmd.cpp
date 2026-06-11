@@ -1474,6 +1474,7 @@ bool RunAtpgCmd::exec(const std::vector<std::string> &argv)
 	if (fanMgr_->perTargetTimeout_ > 0.0)
 		fanMgr_->atpg->setPerTargetTimeoutSec(fanMgr_->perTargetTimeout_);
 	fanMgr_->atpg->setNumThreads(fanMgr_->atpgThreads_);
+	fanMgr_->atpg->useTwoPhaseJustification_ = fanMgr_->useTwoPhaseJustification_;
 
 	std::cout << "#  Performing pattern generation ...";
 	std::cout << " (" << fanMgr_->atpg->numThreads() << " workers)";

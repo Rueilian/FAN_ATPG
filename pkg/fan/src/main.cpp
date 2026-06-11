@@ -230,6 +230,25 @@ void initCmd(CmdMgr &cmdMgr, FanMgr &fanMgr)
 	};
 	Cmd *setPerTargetTimeoutCmd = new SetPerTargetTimeoutCmd("set_per_target_timeout", &fanMgr);
 
+	class SetTwoPhaseJustificationCmd : public CommonNs::Cmd {
+	public:
+		SetTwoPhaseJustificationCmd(const std::string &name, FanMgr *fm) : Cmd(name) { fm_ = fm; }
+		bool exec(const std::vector<std::string> &argv) override {
+			if (argv.size() < 2) { std::cerr << "**ERROR usage: set_two_phase_justification <on/off>\n"; return false; }
+			std::string val = argv[1];
+			if (val == "on" || val == "1" || val == "true") {
+				fm_->useTwoPhaseJustification_ = true;
+				std::cout << "#  two-phase state justification enabled\n";
+			} else {
+				fm_->useTwoPhaseJustification_ = false;
+				std::cout << "#  two-phase state justification disabled\n";
+			}
+			return true;
+		}
+	private: FanMgr *fm_;
+	};
+	Cmd *setTwoPhaseJustificationCmd = new SetTwoPhaseJustificationCmd("set_two_phase_justification", &fanMgr);
+
 	class SetAtpgThreadsCmd : public CommonNs::Cmd {
 	public:
 		SetAtpgThreadsCmd(const std::string &name, FanMgr *fm) : Cmd(name) { fm_ = fm; }
@@ -274,6 +293,7 @@ void initCmd(CmdMgr &cmdMgr, FanMgr &fanMgr)
 	cmdMgr.regCmd("SETUP", setScanProtocolCmd);
 	cmdMgr.regCmd("SETUP", setNonscanFfCmd);
 	cmdMgr.regCmd("SETUP", setPerTargetTimeoutCmd);
+	cmdMgr.regCmd("SETUP", setTwoPhaseJustificationCmd);
 	cmdMgr.regCmd("SETUP", setAtpgThreadsCmd);
 
 	// ATPG commands

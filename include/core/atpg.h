@@ -80,6 +80,7 @@ namespace CoreNs
 		inline double perTargetTimeoutSec() const { return perTargetTimeoutSec_; }
 		void setNumThreads(int n);
 		inline int numThreads() const { return numThreads_; }
+		bool useTwoPhaseJustification_ = false;
 
 	private:
 		int numThreads_ = 0;                                         // 0 = auto (all cores) at run_atpg
@@ -231,6 +232,10 @@ namespace CoreNs
 		void testClearFaultEffect(FaultPtrList &faultListToTest); // removed from generatePatternSet() for now seems like debug usage
 		void resetIsInEventStack();																// not used
 		void XFill(PatternProcessor *pPatternProcessor);					// redundant function, removed by wang
+		bool justifyStateSequentiallyUnrolled(const std::map<int, Value>& requiredState);
+		void disconnectNonscanPPIs();
+		void reconnectNonscanPPIs();
+		std::map<int, int> nonscanDisconnectInfo_;
 	};
 
 	// --------------inline methods----------------- //
