@@ -82,6 +82,12 @@ void Atpg::generatePatternSet(PatternProcessor *pPatternProcessor, FaultListExtr
 	setupCircuitParameter();
 	pPatternProcessor->init(pCircuit_);
 
+	if (useTwoPhaseJustification_ && pCircuit_->numFrame_ > 1)
+	{
+		disconnectNonscanPPIs();
+		setupCircuitParameter();
+	}
+
 	// setting faults for running ATPG
 	for (Fault *pFault : pFaultListExtractor->faultsInCircuit_)
 	{
@@ -144,6 +150,12 @@ void Atpg::generatePatternSet(PatternProcessor *pPatternProcessor, FaultListExtr
 	for (Fault *pFault : originalFaultPtrList)
 	{
 		numOfAtpgUntestableFaults += pFault->equivalent_;
+	}
+
+	if (useTwoPhaseJustification_ && pCircuit_->numFrame_ > 1)
+	{
+		reconnectNonscanPPIs();
+		setupCircuitParameter();
 	}
 }
 
@@ -861,6 +873,12 @@ void Atpg::generatePatternSetParallel(PatternProcessor *pPatternProcessor, Fault
 	setupCircuitParameter();
 	pPatternProcessor->init(pCircuit_);
 
+	if (useTwoPhaseJustification_ && pCircuit_->numFrame_ > 1)
+	{
+		disconnectNonscanPPIs();
+		setupCircuitParameter();
+	}
+
 	for (Fault *pFault : pFaultListExtractor->faultsInCircuit_)
 	{
 		const bool faultIsQualified = (pFault->faultState_ != Fault::DT && pFault->faultState_ != Fault::RE
@@ -917,15 +935,16 @@ void Atpg::generatePatternSetParallel(PatternProcessor *pPatternProcessor, Fault
 		staticTestCompressionByReverseFaultSimulation(pPatternProcessor, faultPtrListForSTC);
 		originalFaultPtrList = faultPtrListForSTC;
 	}
+
+	if (useTwoPhaseJustification_ && pCircuit_->numFrame_ > 1)
+	{
+		reconnectNonscanPPIs();
+		setupCircuitParameter();
+	}
 }
 
 void Atpg::StuckAtFaultATPG(FaultPtrList &faultPtrListForGen, PatternProcessor *pPatternProcessor, int &numOfAtpgUntestableFaults, bool deferFaultDrop)
 {
-	if (useTwoPhaseJustification_)
-	{
-		disconnectNonscanPPIs();
-		setupCircuitParameter();
-	}
 	const Fault mappedTargetFault = mapSafToObservationFrame(pCircuit_, *faultPtrListForGen.front());
 	SINGLE_PATTERN_GENERATION_STATUS result = generateSinglePatternOnTargetFault(mappedTargetFault, false);
 	if (result == PATTERN_FOUND)
@@ -1030,11 +1049,6 @@ void Atpg::StuckAtFaultATPG(FaultPtrList &faultPtrListForGen, PatternProcessor *
 		faultPtrListForGen.front()->faultState_ = Fault::AB;
 		faultPtrListForGen.push_back(faultPtrListForGen.front());
 		faultPtrListForGen.pop_front();
-	}
-	if (useTwoPhaseJustification_)
-	{
-		reconnectNonscanPPIs();
-		setupCircuitParameter();
 	}
 }
 
