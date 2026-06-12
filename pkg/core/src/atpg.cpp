@@ -855,26 +855,30 @@ void parallelAtpgWorker(ParallelAtpgShared *shared, FaultPtrList bucket, Circuit
 
 	while (!work.empty())
 	{
+		// Hold global mutex for ATPG + fault-drop: workers share Fault objects and
+		// faultState_ updates must not race with globalFaultDropAfterPattern (CI).
+		std::lock_guard<std::mutex> lock(shared->mu);
+		if (work.empty())
 		{
-			std::lock_guard<std::mutex> lock(shared->mu);
-			if (work.front()->faultState_ == Fault::AB)
-			{
-				break;
-			}
-			if (work.front()->faultState_ == Fault::DT || work.front()->faultState_ == Fault::AU ||
-			    work.front()->faultState_ == Fault::TO || work.front()->faultState_ == Fault::TI)
-			{
-				work.pop_front();
-				pCurrentFault = nullptr;
-				continue;
-			}
-			if (pCurrentFault == work.front())
-			{
-				work.front()->faultState_ = Fault::DT;
-				work.pop_front();
-				pCurrentFault = nullptr;
-				continue;
-			}
+			break;
+		}
+		if (work.front()->faultState_ == Fault::AB)
+		{
+			break;
+		}
+		if (work.front()->faultState_ == Fault::DT || work.front()->faultState_ == Fault::AU ||
+		    work.front()->faultState_ == Fault::TO || work.front()->faultState_ == Fault::TI)
+		{
+			work.pop_front();
+			pCurrentFault = nullptr;
+			continue;
+		}
+		if (pCurrentFault == work.front())
+		{
+			work.front()->faultState_ = Fault::DT;
+			work.pop_front();
+			pCurrentFault = nullptr;
+			continue;
 		}
 
 		pCurrentFault = work.front();
@@ -883,7 +887,6 @@ void parallelAtpgWorker(ParallelAtpgShared *shared, FaultPtrList bucket, Circuit
 
 		if (localPP.patternVector_.size() > patBefore)
 		{
-			std::lock_guard<std::mutex> lock(shared->mu);
 			shared->globalPP->patternVector_.push_back(localPP.patternVector_.back());
 			shared->masterAtpg->globalFaultDropAfterPattern(shared->globalPP, *shared->remainingFaults);
 			localPP.patternVector_.pop_back();
