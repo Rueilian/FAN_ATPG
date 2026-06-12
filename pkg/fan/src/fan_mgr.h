@@ -34,6 +34,7 @@ public:
         atpgThreads_ = 0;
         scanProtocolEnabled_ = true;
         scanProtocolApplied_ = false;
+        useTwoPhaseJustification_ = true;
         atpgStat.rTime = 0;
     }
     ~FanMgr() {}
@@ -49,6 +50,7 @@ public:
     int                  atpgThreads_;       // parallel fault-partition workers (1 = sequential)
     bool                 scanProtocolEnabled_;  // auto TI async reset/control PIs (default on)
     bool                 scanProtocolApplied_;
+    bool                 useTwoPhaseJustification_;
     CommonNs::TmUsage   tmusg;
     CommonNs::TmStat    atpgStat;
     // Cell names of FFs declared as non-scan (set by set_nonscan_ff before build_circuit).

@@ -9,4 +9,5 @@ lib/opt/atpg_cmd.o lib/opt/atpg_cmd.d : src/atpg_cmd.cpp src/atpg_cmd.h ../../in
  ../../include/core/circuit.h ../../include/core/gate.h \
  ../../include/interface/cell.h ../../include/core/logic.h \
  ../../include/core/fault.h ../../include/core/pattern_rw.h \
- ../../include/interface/pat_file.h ../../include/core/simulator.h
+ ../../include/interface/pat_file.h ../../include/core/scan_protocol.h \
+ ../../include/core/simulator.h

@@ -33,6 +33,7 @@ namespace CoreNs
 		bool get(int &gateId, int &startPoint);
 		bool empty() const;
 		bool lastNodeMarked() const;
+		inline size_t size() const { return tree_.size(); }
 
 	private:
 		std::vector<DecisionTreeNode> tree_;

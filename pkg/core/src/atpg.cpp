@@ -81,6 +81,12 @@ void Atpg::generatePatternSet(PatternProcessor *pPatternProcessor, FaultListExtr
 	setupCircuitParameter();
 	pPatternProcessor->init(pCircuit_);
 
+	if (useTwoPhaseJustification_ && pCircuit_->numFrame_ > 1)
+	{
+		disconnectNonscanPPIs();
+		setupCircuitParameter();
+	}
+
 	// setting faults for running ATPG
 	for (Fault *pFault : pFaultListExtractor->faultsInCircuit_)
 	{
@@ -116,6 +122,12 @@ void Atpg::generatePatternSet(PatternProcessor *pPatternProcessor, FaultListExtr
 	for (Fault *pFault : originalFaultPtrList)
 	{
 		numOfAtpgUntestableFaults += pFault->equivalent_;
+	}
+
+	if (useTwoPhaseJustification_ && pCircuit_->numFrame_ > 1)
+	{
+		reconnectNonscanPPIs();
+		setupCircuitParameter();
 	}
 }
 
@@ -842,6 +854,7 @@ void parallelAtpgWorker(ParallelAtpgShared *shared, FaultPtrList bucket, Circuit
 	localAtpg.setPerTargetTimeoutSec(shared->perTargetTimeout);
 	localAtpg.backtrackLimit_ = shared->masterAtpg->twoPhaseAtpg_ ? FAST_BACKTRACK_LIMIT : BACKTRACK_LIMIT;
 	localAtpg.twoPhaseAtpg_ = false;
+	localAtpg.useTwoPhaseJustification_ = shared->masterAtpg->useTwoPhaseJustification_;
 
 	PatternProcessor localPP;
 	localPP.init(&local);
@@ -900,6 +913,12 @@ void Atpg::generatePatternSetParallel(PatternProcessor *pPatternProcessor, Fault
 	FaultPtrList originalFaultPtrList, faultPtrListForSTC;
 	setupCircuitParameter();
 	pPatternProcessor->init(pCircuit_);
+
+	if (useTwoPhaseJustification_ && pCircuit_->numFrame_ > 1)
+	{
+		disconnectNonscanPPIs();
+		setupCircuitParameter();
+	}
 
 	for (Fault *pFault : pFaultListExtractor->faultsInCircuit_)
 	{
@@ -961,6 +980,12 @@ void Atpg::generatePatternSetParallel(PatternProcessor *pPatternProcessor, Fault
 	{
 		staticTestCompressionByReverseFaultSimulation(pPatternProcessor, faultPtrListForSTC);
 		originalFaultPtrList = faultPtrListForSTC;
+	}
+
+	if (useTwoPhaseJustification_ && pCircuit_->numFrame_ > 1)
+	{
+		reconnectNonscanPPIs();
+		setupCircuitParameter();
 	}
 }
 
@@ -1482,9 +1507,85 @@ Atpg::SINGLE_PATTERN_GENERATION_STATUS Atpg::generateSinglePatternOnTargetFault(
 				// Finding values on the primary inputs which justify all the values on the head lines
 				// LINE JUSTIFICATION OF FREE LINES
 				justifyFreeLines(targetFault);
-				// EXIT: TEST GENERATED
-				genStatus = PATTERN_FOUND;
-				Finish = true;
+				
+				if (useTwoPhaseJustification_)
+				{
+					std::map<int, Value> requiredState;
+					int T = pCircuit_->numFrame_;
+					if (T > 1)
+					{
+						int lastFrameOffset = (T - 1) * pCircuit_->numGate_;
+						for (int j = 0; j < pCircuit_->numPPI_; ++j)
+						{
+							if (!pCircuit_->isPpiNonscan_.empty() && pCircuit_->isPpiNonscan_[j])
+							{
+								int gateID = lastFrameOffset + pCircuit_->numPI_ + j;
+								Value val = pCircuit_->circuitGates_[gateID].atpgVal_;
+								if (val != X)
+								{
+									requiredState[gateID] = val;
+								}
+							}
+						}
+					}
+					
+					bool justified = true;
+					if (!requiredState.empty())
+					{
+						// Save solver state
+						DecisionTree savedTree = backtrackDecisionTree_;
+						std::vector<int> savedImplicated = backtrackImplicatedGateIDs_;
+						std::vector<int> savedValModified = gateID_to_valModified_;
+						std::vector<int> savedUnjustified = unjustifiedGateIDs_;
+						std::vector<Value> savedAtpgVal(pCircuit_->circuitGates_.size());
+						for (size_t g = 0; g < pCircuit_->circuitGates_.size(); ++g)
+						{
+							savedAtpgVal[g] = pCircuit_->circuitGates_[g].atpgVal_;
+						}
+						
+						justified = justifyStateSequentiallyUnrolled(requiredState);
+						
+						if (!justified)
+						{
+							// Restore solver state
+							backtrackDecisionTree_ = savedTree;
+							backtrackImplicatedGateIDs_ = savedImplicated;
+							gateID_to_valModified_ = savedValModified;
+							unjustifiedGateIDs_ = savedUnjustified;
+							for (size_t g = 0; g < pCircuit_->circuitGates_.size(); ++g)
+							{
+								pCircuit_->circuitGates_[g].atpgVal_ = savedAtpgVal[g];
+							}
+						}
+					}
+					
+					if (justified)
+					{
+						genStatus = PATTERN_FOUND;
+						Finish = true;
+					}
+					else
+					{
+						// Backtrack!
+						if (backtrack(backwardImplicationLevel))
+						{
+							backtraceFlag = INITIAL;
+							implicationStatus = (backwardImplicationLevel > 0) ? BACKWARD : FORWARD;
+							pLastDFrontier = NULL;
+						}
+						else
+						{
+							genStatus = FAULT_UNTESTABLE;
+							Finish = true;
+						}
+					}
+				}
+				else
+				{
+					// EXIT: TEST GENERATED
+					genStatus = PATTERN_FOUND;
+					Finish = true;
+				}
 			}
 		}
 		else
@@ -5815,4 +5916,175 @@ void Atpg::XFill(PatternProcessor *pPatternProcessor)
 		pSimulator_->goodSim();
 		writeGoodSimValToPatternPO(pPatternProcessor->patternVector_.at(i));
 	}
+}
+
+void Atpg::disconnectNonscanPPIs()
+{
+	int T = pCircuit_->numFrame_;
+	if (T < 2) return;
+	int lastFrameOffset = (T - 1) * pCircuit_->numGate_;
+	for (int j = 0; j < pCircuit_->numPPI_; ++j)
+	{
+		if (!pCircuit_->isPpiNonscan_.empty() && pCircuit_->isPpiNonscan_[j])
+		{
+			int gateID = lastFrameOffset + pCircuit_->numPI_ + j;
+			Gate &gate = pCircuit_->circuitGates_[gateID];
+			if (gate.numFI_ > 0)
+			{
+				int drivingGateID = gate.faninVector_[0];
+				nonscanDisconnectInfo_[gateID] = drivingGateID;
+				gate.numFI_ = 0;
+				gate.faninVector_.clear();
+				gate.gateType_ = Gate::PPI;
+				
+				Gate &drivingGate = pCircuit_->circuitGates_[drivingGateID];
+				drivingGate.numFO_ = 0;
+				drivingGate.fanoutVector_.clear();
+			}
+		}
+	}
+}
+
+void Atpg::reconnectNonscanPPIs()
+{
+	for (const auto &pair : nonscanDisconnectInfo_)
+	{
+		int gateID = pair.first;
+		int drivingGateID = pair.second;
+		Gate &gate = pCircuit_->circuitGates_[gateID];
+		gate.numFI_ = 1;
+		gate.faninVector_.resize(1);
+		gate.faninVector_[0] = drivingGateID;
+		gate.gateType_ = Gate::BUF;
+		
+		Gate &drivingGate = pCircuit_->circuitGates_[drivingGateID];
+		drivingGate.numFO_ = 1;
+		drivingGate.fanoutVector_.resize(1);
+		drivingGate.fanoutVector_[0] = gateID;
+	}
+	nonscanDisconnectInfo_.clear();
+}
+
+bool Atpg::justifyStateSequentiallyUnrolled(const std::map<int, Value>& requiredState)
+{
+	int T = pCircuit_->numFrame_;
+	if (T < 2) return true;
+	int lastFrameStart = (T - 1) * pCircuit_->numGate_;
+
+	// 1. Reset ATPG values of all gates in frames 0 to T-2 to X
+	for (int g = 0; g < lastFrameStart; ++g)
+	{
+		pCircuit_->circuitGates_[g].atpgVal_ = X;
+	}
+
+	// 2. Clear J-frontier and event stack
+	clearEventStack(false);
+	unjustifiedGateIDs_.clear();
+	dFrontiers_.clear();
+
+	// 3. Apply the state requirements to the driving PPOs at frame T-2
+	for (const auto &assign : requiredState)
+	{
+		int gateId = assign.first;
+		Value val = assign.second;
+		int drivingGateID = gateId - pCircuit_->numPI_ - pCircuit_->numPPI_;
+		
+		pCircuit_->circuitGates_[drivingGateID].atpgVal_ = val;
+		pushGateFanoutsToEventStack(drivingGateID);
+	}
+	
+	// 4. Bounded search loop for justification
+	int backtrackCount = 0;
+	const int BACKTRACK_LIMIT = 500;
+	size_t phase1DecisionCount = backtrackDecisionTree_.size();
+	
+	int backwardImplicationLevel = 0;
+	IMPLICATION_STATUS implicationStatus = FORWARD;
+	BACKTRACE_STATUS backtraceFlag = INITIAL;
+	Gate *pLastDFrontier = nullptr;
+	
+	bool finished = false;
+	bool success = false;
+	
+	while (!finished)
+	{
+		if (!doImplication(implicationStatus, backwardImplicationLevel))
+		{
+			if (backtrackDecisionTree_.lastNodeMarked())
+			{
+				++backtrackCount;
+			}
+			if (backtrackCount > BACKTRACK_LIMIT)
+			{
+				finished = true;
+				success = false;
+				continue;
+			}
+			if (backtrackDecisionTree_.size() <= phase1DecisionCount)
+			{
+				finished = true;
+				success = false;
+				continue;
+			}
+			if (backtrack(backwardImplicationLevel))
+			{
+				backtraceFlag = INITIAL;
+				implicationStatus = (backwardImplicationLevel > 0) ? BACKWARD : FORWARD;
+				pLastDFrontier = nullptr;
+			}
+			else
+			{
+				finished = true;
+				success = false;
+			}
+			continue;
+		}
+		
+		updateUnjustifiedGateIDs();
+		if (!unjustifiedGateIDs_.empty())
+		{
+			if (!findFinalObjective(backtraceFlag, true, pLastDFrontier))
+			{
+				if (backtrackDecisionTree_.lastNodeMarked())
+				{
+					++backtrackCount;
+				}
+				if (backtrackCount > BACKTRACK_LIMIT)
+				{
+					finished = true;
+					success = false;
+					continue;
+				}
+				if (backtrackDecisionTree_.size() <= phase1DecisionCount)
+				{
+					finished = true;
+					success = false;
+					continue;
+				}
+				if (backtrack(backwardImplicationLevel))
+				{
+					backtraceFlag = INITIAL;
+					implicationStatus = (backwardImplicationLevel > 0) ? BACKWARD : FORWARD;
+					pLastDFrontier = nullptr;
+				}
+				else
+				{
+					finished = true;
+					success = false;
+				}
+				continue;
+			}
+			assignAtpgValToFinalObjectiveGates();
+			implicationStatus = FORWARD;
+		}
+		else
+		{
+			// All objectives justified! Let's justify free lines.
+			justifyFreeLines(currentTargetFault_);
+			success = true;
+			finished = true;
+		}
+	}
+	
+	return success;
 }
