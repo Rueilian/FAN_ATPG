@@ -19,7 +19,7 @@ A report records the important statistics:
 
 - **Primary:** `fault coverage (scan protocol)`, `test coverage (scan protocol)` — async reset/control PI excluded (TI)<br>
 - **Appendix:** `fault coverage (raw, appendix)`, `test coverage (raw, appendix)`, `atpg effectiveness`<br>
-- See `docs/superpowers/plans/2026-06-09-scan-protocol-fc-metric.md`<br>
+- See `docs/archive/superpowers/plans/2026-06-09-scan-protocol-fc-metric.md`<br>
 
 - #Patterns<br>
 \- Test Length

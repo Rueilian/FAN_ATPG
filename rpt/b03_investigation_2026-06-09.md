@@ -109,7 +109,7 @@ b03 improves marginally — remaining AU is MUX2/FSM PODEM ceiling, not observat
 
 ### Recommended Next Steps
 
-> **Phase C 計劃（已完成）：** [`docs/superpowers/plans/2026-06-09-phase-c-fan-atpg-fix.md`](../../docs/superpowers/plans/2026-06-09-phase-c-fan-atpg-fix.md)
+> **Phase C 計劃（已完成）：** [`docs/superpowers/plans/2026-06-09-phase-c-fan-atpg-fix.md`](../../docs/archive/superpowers/plans/2026-06-09-phase-c-fan-atpg-fix.md)
 
 1. **C1（已完成）：** 修復 `checkIfFaultHasPropagatedToPO` — 改為遍歷 `Gate::PO`/`Gate::PPO`，不再從 array tail 索引（scan pseudo 會遮蓋真實 PO/PPO）
 2. **C2（已完成）：** reset tie-high（`b03_reset_tie.v`）FC=33.96%，無改善；per-FF RN retarget 因 dangling net 無法通過 FAN check
@@ -188,4 +188,4 @@ Phase D PODEM fixes (atomic MUX2/compound gates) raised b03 from ~35% to **FC_sc
 
 **Residual AU:** `_157_` (AOI211) + `_159_/A3` (NOR4) — likely UD in frame-1 FSM context; not worth further PODEM patching.
 
-**Docs:** [`docs/superpowers/plans/2026-06-09-scan-protocol-fc-metric.md`](../../docs/superpowers/plans/2026-06-09-scan-protocol-fc-metric.md), [`2026-06-09-phase-d-podem-fix.md`](../../docs/superpowers/plans/2026-06-09-phase-d-podem-fix.md).
+**Docs:** [`docs/superpowers/plans/2026-06-09-scan-protocol-fc-metric.md`](../../docs/archive/superpowers/plans/2026-06-09-scan-protocol-fc-metric.md), [`2026-06-09-phase-d-podem-fix.md`](../../docs/archive/superpowers/plans/2026-06-09-phase-d-podem-fix.md).

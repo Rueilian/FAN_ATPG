@@ -48,4 +48,4 @@
 - Phase C correctly identified observation bug + engine ceiling; Phase D addressed PODEM/MUX modeling.
 - Report **FC_scan** (async reset excluded per Cummings SNUG 2002); put **FC_raw** and AU_reset in appendix.
 - Remaining gap vs commercial ~99% is mainly **QN UD (62)** + **2 comb AU**, not reset protocol mismatch.
-- See [`docs/superpowers/plans/2026-06-09-scan-protocol-fc-metric.md`](../../docs/superpowers/plans/2026-06-09-scan-protocol-fc-metric.md).
+- See [`docs/superpowers/plans/2026-06-09-scan-protocol-fc-metric.md`](../../docs/archive/superpowers/plans/2026-06-09-scan-protocol-fc-metric.md).
