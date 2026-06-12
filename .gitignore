@@ -1,3 +1,42 @@
 .vscode/*
 makefile_output.txt
 profiler.txt
+
+# Local build / NFS artifacts
+bin/opt/.nfs*
+*.o
+*.a
+*.exe
+pkg/core/bin/
+
+# Downloaded techlib (use mod_nangate45.mdt in repo)
+techlib/NangateOpenCellLibrary_typical.lib
+
+# Local ATPG debug outputs from benchmark runs
+/rpt/b*
+/rpt/s*
+/rpt/tiny_*
+/rpt/debug*
+/rpt/diag_*
+/rpt/par_*
+/rpt/forced_*
+/script/fanScripts/b*
+/script/fanScripts/s*
+/script/fanScripts/tiny_*
+/script/fanScripts/debug*
+/script/fanScripts/manual_*
+/script/fanScripts/test_*
+/script/fanScripts/issue32*
+/script/fanScripts/check_*
+/mod_netlist/b*_dffr.v
+/mod_netlist/b*_ck.v
+/mod_netlist/b*_copy.v
+/mod_netlist/b*_fan_fs.v
+/mod_netlist/b*_noscan*
+/mod_netlist/b*_rn_*
+/mod_netlist/b*_scan.v
+/mod_netlist/b*_sdff*
+/mod_netlist/b*_test.v
+/mod_netlist/b*_reset_tie.v
+/mod_netlist/tiny_*
+/results/*.sf
