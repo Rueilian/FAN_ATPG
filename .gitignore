@@ -39,4 +39,17 @@ techlib/NangateOpenCellLibrary_typical.lib
 /mod_netlist/b*_test.v
 /mod_netlist/b*_reset_tie.v
 /mod_netlist/tiny_*
+# Intermediate ISCAS'89 conversion artifacts (DFFR_X1 before scan insertion)
+/mod_netlist/s*_dffr.v
+# Minimized / debug circuits
+/mod_netlist/*_min.v
+/mod_netlist/min_*.v
+/mod_netlist/*_tiny*.v
+/mod_netlist/comb_test.v
+/mod_netlist/dffr_bare.v
+/mod_netlist/dffr_test.v
+/mod_netlist/ff_test*.v
+/mod_netlist/test_min.v
+# Make dependency files
+*.d
 /results/*.sf
