@@ -11,6 +11,18 @@
 
 using namespace CoreNs;
 
+namespace
+{
+	int equivalentAt(const std::vector<int> &equivalent, int gateID)
+	{
+		if (gateID < 0 || gateID >= (int)equivalent.size())
+		{
+			return 1;
+		}
+		return equivalent[gateID];
+	}
+}
+
 // **************************************************************************
 // Function   [ FaultListExtract::extractFaultFromCircuit ]
 // Commenter  [ PYH ]
@@ -33,9 +45,12 @@ void FaultListExtract::extractFaultFromCircuit(Circuit *pCircuit)
 {
 	bool useFC = true; // Should be able to set on or off in script like test compression.
 
-	// Since the function only called once, we don't need to clear faults initially.
+	uncollapsedFaults_.clear();
+	extractedFaults_.clear();
+	gateIndexToFaultIndex_.clear();
+
 	// Reserve enough space for faults push_back, 10 * circuit->numGate_ is maximum possible faults in a circuit.
-	int reservedSize = 10 * pCircuit->numGate_;
+	int reservedSize = 10 * pCircuit->totalGate_;
 	uncollapsedFaults_.reserve(reservedSize);
 	extractedFaults_.reserve(reservedSize);
 
@@ -88,7 +103,7 @@ void FaultListExtract::extractFaultFromCircuit(Circuit *pCircuit)
 		}
 		else // Simple Equivalent Fault Collapsing.
 		{
-			std::vector<int> SA0Equivalent(pCircuit->numGate_, 1), SA1Equivalent(pCircuit->numGate_, 1); // Used to count the number of equivalent faults.
+			std::vector<int> SA0Equivalent(pCircuit->totalGate_, 1), SA1Equivalent(pCircuit->totalGate_, 1); // Used to count the number of equivalent faults.
 			int SA0EquivalentOfInput, SA1EquivalentOfInput; // SA0Equivalent, SA1Equivalent of the input(fanin) gates.
 			for (int i = 0; i < pCircuit->numGate_; ++i)
 			{
@@ -101,8 +116,9 @@ void FaultListExtract::extractFaultFromCircuit(Circuit *pCircuit)
 					case Gate::AND4:
 						for (int j = 0; j < pCircuit->circuitGates_[i].numFI_; ++j)
 						{
-							SA0EquivalentOfInput = SA0Equivalent[pCircuit->circuitGates_[i].faninVector_[j]];
-							SA1EquivalentOfInput = SA1Equivalent[pCircuit->circuitGates_[i].faninVector_[j]];
+							const int faninID = pCircuit->circuitGates_[i].faninVector_[j];
+							SA0EquivalentOfInput = equivalentAt(SA0Equivalent, faninID);
+							SA1EquivalentOfInput = equivalentAt(SA1Equivalent, faninID);
 							extractedFaults_.push_back(Fault(i, Fault::SA1, j + 1, SA1EquivalentOfInput));
 							SA0Equivalent[i] += SA0EquivalentOfInput;
 						}
@@ -113,8 +129,9 @@ void FaultListExtract::extractFaultFromCircuit(Circuit *pCircuit)
 					case Gate::NAND4:
 						for (int j = 0; j < pCircuit->circuitGates_[i].numFI_; ++j)
 						{
-							SA0EquivalentOfInput = SA0Equivalent[pCircuit->circuitGates_[i].faninVector_[j]];
-							SA1EquivalentOfInput = SA1Equivalent[pCircuit->circuitGates_[i].faninVector_[j]];
+							const int faninID = pCircuit->circuitGates_[i].faninVector_[j];
+							SA0EquivalentOfInput = equivalentAt(SA0Equivalent, faninID);
+							SA1EquivalentOfInput = equivalentAt(SA1Equivalent, faninID);
 							extractedFaults_.push_back(Fault(i, Fault::SA1, j + 1, SA1EquivalentOfInput));
 							SA1Equivalent[i] += SA0EquivalentOfInput;
 						}
@@ -125,8 +142,9 @@ void FaultListExtract::extractFaultFromCircuit(Circuit *pCircuit)
 					case Gate::OR4:
 						for (int j = 0; j < pCircuit->circuitGates_[i].numFI_; ++j)
 						{
-							SA0EquivalentOfInput = SA0Equivalent[pCircuit->circuitGates_[i].faninVector_[j]];
-							SA1EquivalentOfInput = SA1Equivalent[pCircuit->circuitGates_[i].faninVector_[j]];
+							const int faninID = pCircuit->circuitGates_[i].faninVector_[j];
+							SA0EquivalentOfInput = equivalentAt(SA0Equivalent, faninID);
+							SA1EquivalentOfInput = equivalentAt(SA1Equivalent, faninID);
 							extractedFaults_.push_back(Fault(i, Fault::SA0, j + 1, SA0EquivalentOfInput));
 							SA1Equivalent[i] += SA1EquivalentOfInput;
 						}
@@ -137,8 +155,9 @@ void FaultListExtract::extractFaultFromCircuit(Circuit *pCircuit)
 					case Gate::NOR4:
 						for (int j = 0; j < pCircuit->circuitGates_[i].numFI_; ++j)
 						{
-							SA0EquivalentOfInput = SA0Equivalent[pCircuit->circuitGates_[i].faninVector_[j]];
-							SA1EquivalentOfInput = SA1Equivalent[pCircuit->circuitGates_[i].faninVector_[j]];
+							const int faninID = pCircuit->circuitGates_[i].faninVector_[j];
+							SA0EquivalentOfInput = equivalentAt(SA0Equivalent, faninID);
+							SA1EquivalentOfInput = equivalentAt(SA1Equivalent, faninID);
 							extractedFaults_.push_back(Fault(i, Fault::SA0, j + 1, SA0EquivalentOfInput));
 							SA0Equivalent[i] += SA1EquivalentOfInput;
 						}
@@ -147,23 +166,30 @@ void FaultListExtract::extractFaultFromCircuit(Circuit *pCircuit)
 					// We don't need to add faults at these two types of gate.
 					// But we need to calculate the number of equivalent faults.
 					case Gate::INV:
-						SA0EquivalentOfInput = SA0Equivalent[pCircuit->circuitGates_[i].faninVector_[0]];
-						SA1EquivalentOfInput = SA1Equivalent[pCircuit->circuitGates_[i].faninVector_[0]];
-						SA0Equivalent[i] = SA1EquivalentOfInput + 1;
-						SA1Equivalent[i] = SA0EquivalentOfInput + 1;
+						if (pCircuit->circuitGates_[i].numFI_ > 0)
+						{
+							SA0EquivalentOfInput = equivalentAt(SA0Equivalent, pCircuit->circuitGates_[i].faninVector_[0]);
+							SA1EquivalentOfInput = equivalentAt(SA1Equivalent, pCircuit->circuitGates_[i].faninVector_[0]);
+							SA0Equivalent[i] = SA1EquivalentOfInput + 1;
+							SA1Equivalent[i] = SA0EquivalentOfInput + 1;
+						}
 						break;
 					case Gate::BUF:
-						SA0EquivalentOfInput = SA0Equivalent[pCircuit->circuitGates_[i].faninVector_[0]];
-						SA1EquivalentOfInput = SA1Equivalent[pCircuit->circuitGates_[i].faninVector_[0]];
-						SA0Equivalent[i] = SA0EquivalentOfInput + 1;
-						SA1Equivalent[i] = SA1EquivalentOfInput + 1;
+						if (pCircuit->circuitGates_[i].numFI_ > 0)
+						{
+							SA0EquivalentOfInput = equivalentAt(SA0Equivalent, pCircuit->circuitGates_[i].faninVector_[0]);
+							SA1EquivalentOfInput = equivalentAt(SA1Equivalent, pCircuit->circuitGates_[i].faninVector_[0]);
+							SA0Equivalent[i] = SA0EquivalentOfInput + 1;
+							SA1Equivalent[i] = SA1EquivalentOfInput + 1;
+						}
 						break;
 					// Other gates, including PO and PPO gates.
 					default:
 						for (int j = 0; j < pCircuit->circuitGates_[i].numFI_; ++j)
 						{
-							SA0EquivalentOfInput = SA0Equivalent[pCircuit->circuitGates_[i].faninVector_[j]];
-							SA1EquivalentOfInput = SA1Equivalent[pCircuit->circuitGates_[i].faninVector_[j]];
+							const int faninID = pCircuit->circuitGates_[i].faninVector_[j];
+							SA0EquivalentOfInput = equivalentAt(SA0Equivalent, faninID);
+							SA1EquivalentOfInput = equivalentAt(SA1Equivalent, faninID);
 							extractedFaults_.push_back(Fault(i, Fault::SA0, j + 1, SA0EquivalentOfInput));
 							extractedFaults_.push_back(Fault(i, Fault::SA1, j + 1, SA1EquivalentOfInput));
 						}
@@ -261,7 +287,8 @@ void FaultListExtract::extractFaultFromCircuit(Circuit *pCircuit)
 			// Extract faults of gate inputs.
 			for (int j = 0; j < pCircuit->circuitGates_[i].numFI_; ++j)
 			{
-				if (pCircuit->circuitGates_[pCircuit->circuitGates_[i].faninVector_[j]].numFO_ > 1) // fanout stem
+				const int faninID = pCircuit->circuitGates_[i].faninVector_[j];
+				if (faninID >= 0 && faninID < pCircuit->totalGate_ && pCircuit->circuitGates_[faninID].numFO_ > 1) // fanout stem
 				{
 					uncollapsedFaults_.push_back(Fault(i, Fault::STR, j + 1));
 					uncollapsedFaults_.push_back(Fault(i, Fault::STF, j + 1));

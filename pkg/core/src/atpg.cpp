@@ -5,7 +5,7 @@
 // Date       [ 2011/11/01 created ]
 // **************************************************************************
 
-#include "core/atpg.h"
+#include "atpg.h"
 #include <algorithm>
 #include <chrono>
 #include <mutex>
@@ -643,22 +643,8 @@ void Atpg::setNumThreads(int n)
 
 bool Atpg::mergeBacktraceRequirement(const int gateID, const Value branchReq)
 {
-	if (branchReq == X || !isNineValuedLogic(branchReq))
-	{
-		return true;
-	}
-	Value &cur = gateID_to_requiredVal_[gateID];
-	if (cur == X)
-	{
-		cur = branchReq;
-		return true;
-	}
-	const Value merged = atpgIntersect(cur, branchReq);
-	if (merged == I)
-	{
-		return false;
-	}
-	cur = merged;
+	(void)gateID;
+	(void)branchReq;
 	return true;
 }
 
@@ -3098,6 +3084,10 @@ bool Atpg::findFinalObjective(BACKTRACE_STATUS &backtraceFlag, const bool &fault
 				// EXIT
 				return true;
 			}
+			if (!finalObjectives_.empty())
+			{
+				return true;
+			}
 		}
 		else
 		{ // NO
@@ -3118,6 +3108,10 @@ bool Atpg::findFinalObjective(BACKTRACE_STATUS &backtraceFlag, const bool &fault
 					// LET THE FANOUT-POINT OBJECTIVE BE FINAL OBJECTIVE TO ASSIGN VALUE
 					finalObjectives_.push_back(finalObjectiveId);
 					// EXIT
+					return true;
+				}
+				if (!finalObjectives_.empty())
+				{
 					return true;
 				}
 			}
@@ -3215,7 +3209,7 @@ void Atpg::assignAtpgValToFinalObjectiveGates()
 		const Value required = gateID_to_requiredVal_[pGate->gateId_];
 		if (isNineValuedLogic(required) && !isFullyUnspecified(required))
 		{
-			pGate->atpgVal_ = required;
+			pGate->atpgVal_ = atpgToPatternValue(required);
 		}
 		else if (gateID_to_n0_[pGate->gateId_] > gateID_to_n1_[pGate->gateId_])
 		{
@@ -4937,14 +4931,7 @@ void Atpg::initializeForMultipleBacktrace()
 					break;
 			}
 		}
-		if (isNineValuedLogic(pGate->atpgVal_) && !isFullyUnspecified(pGate->atpgVal_))
-		{
-			gateID_to_requiredVal_[pGate->gateId_] = pGate->atpgVal_;
-		}
-		else
-		{
-			resetBacktraceRequirement(pGate->gateId_);
-		}
+		resetBacktraceRequirement(pGate->gateId_);
 		// record reset list
 		gateIDsToResetAfterBackTrace_.push_back(pGate->gateId_);
 	}

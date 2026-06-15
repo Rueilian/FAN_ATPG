@@ -22,6 +22,9 @@ all : install
 install : $(OWNINS)
 	@echo -n
 
+install_core : install_interface
+install_fan : install_common install_interface install_core
+
 uninstall : $(OWNUNINS)
 	@echo -n
 
