@@ -836,26 +836,45 @@ void Atpg::runSaAtpgMainLoop(FaultPtrList &workList, PatternProcessor *pPatternP
 
 void Atpg::runResidualAtpgPhase(PatternProcessor *pPatternProcessor, FaultListExtract *pFaultListExtractor)
 {
-	FaultPtrList residual;
+	const int savedLimit = backtrackLimit_;
+	const double savedPto = perTargetTimeoutSec_;
+
+	// Phase A: retry AU faults (structural candidates) — unlimited time, standard limit
+	FaultPtrList auResidual;
 	for (Fault *pFault : pFaultListExtractor->faultsInCircuit_)
 	{
 		if (pFault->faultState_ == Fault::AU && pFault->faultyLine_ >= 0)
 		{
 			pFault->faultState_ = Fault::UD;
-			residual.push_back(pFault);
+			auResidual.push_back(pFault);
 		}
 	}
-	if (residual.empty())
+	if (!auResidual.empty())
 	{
-		return;
+		backtrackLimit_ = BACKTRACK_LIMIT;
+		perTargetTimeoutSec_ = 0.0;
+		sortFaultListFanInConeDescending(auResidual);
+		runSaAtpgMainLoop(auResidual, pPatternProcessor);
 	}
 
-	const int savedLimit = backtrackLimit_;
-	const double savedPto = perTargetTimeoutSec_;
-	backtrackLimit_ = BACKTRACK_LIMIT;
-	perTargetTimeoutSec_ = 0.0;
-	sortFaultListFanInConeDescending(residual);
-	runSaAtpgMainLoop(residual, pPatternProcessor);
+	// Phase B: retry AB faults with 10x backtrack budget — catches search-budget-limited faults
+	FaultPtrList abResidual;
+	for (Fault *pFault : pFaultListExtractor->faultsInCircuit_)
+	{
+		if (pFault->faultState_ == Fault::AB && pFault->faultyLine_ >= 0)
+		{
+			pFault->faultState_ = Fault::UD;
+			abResidual.push_back(pFault);
+		}
+	}
+	if (!abResidual.empty())
+	{
+		backtrackLimit_ = BACKTRACK_LIMIT * 10;
+		perTargetTimeoutSec_ = 0.0;
+		sortFaultListFanInConeDescending(abResidual);
+		runSaAtpgMainLoop(abResidual, pPatternProcessor);
+	}
+
 	backtrackLimit_ = savedLimit;
 	perTargetTimeoutSec_ = savedPto;
 }
@@ -896,6 +915,9 @@ void parallelAtpgWorker(ParallelAtpgShared *shared, FaultPtrList bucket, Circuit
 	localAtpg.twoPhaseAtpg_ = false;
 	localAtpg.useTwoPhaseJustification_ = shared->masterAtpg->useTwoPhaseJustification_;
 	localAtpg.useNineValuedLogic_ = shared->masterAtpg->useNineValuedLogic_;
+	// Copy the non-scan PPI → BUF driver map so justifyStateSequentiallyUnrolled can
+	// find the correct gate IDs in each worker's local circuit copy.
+	localAtpg.nonscanDisconnectInfo_ = shared->masterAtpg->nonscanDisconnectInfo_;
 
 	PatternProcessor localPP;
 	localPP.init(&local);
@@ -6175,7 +6197,7 @@ bool Atpg::justifyStateSequentiallyUnrolled(const std::map<int, Value>& required
 		int gateId = assign.first;
 		Value val = assign.second;
 		int drivingGateID = gateId - pCircuit_->numPI_ - pCircuit_->numPPI_;
-		
+
 		pCircuit_->circuitGates_[drivingGateID].atpgVal_ = val;
 		pushGateFanoutsToEventStack(drivingGateID);
 	}
