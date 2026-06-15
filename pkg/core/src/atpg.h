@@ -200,6 +200,7 @@ namespace CoreNs
 
 		inline void setGaten0n1(const int &gateID, const int &n0, const int &n1);
 		inline Value backtraceCountsToValue(int n0, int n1) const;
+		inline bool reconcileGateAtpgVal(Value &stored, const Value &evaluated) const;
 		inline bool hasAtpgFaultEffect(const Value &value) const;
 		inline Value patternFromAtpgVal(const Value &value) const;
 
@@ -366,11 +367,11 @@ namespace CoreNs
 			case Gate::XNOR3:
 				return cXNOR3(v[0], v[1], v[2]);
 			case Gate::MUX:
-				if (useNineValuedLogic_ ? atpgGoodIsLow(v[2]) : v[2] == L)
+				if (useNineValuedLogic_ ? atpgGoodEquals(v[2], L) : v[2] == L)
 				{
 					return v[0];
 				}
-				if (useNineValuedLogic_ ? atpgGoodIsHigh(v[2]) : v[2] == H)
+				if (useNineValuedLogic_ ? atpgGoodEquals(v[2], H) : v[2] == H)
 				{
 					return v[1];
 				}
@@ -417,40 +418,19 @@ namespace CoreNs
 			case Gate::PPO:
 			case Gate::BUF:
 				val = pCircuit_->circuitGates_[gate.faninVector_[0]].atpgVal_;
-				if (val == L && (currentTargetFault_.faultType_ == Fault::SA1 || currentTargetFault_.faultType_ == Fault::STF))
-				{
-					val = B; // logic D' (0/1)
-				}
-				if (val == H && (currentTargetFault_.faultType_ == Fault::SA0 || currentTargetFault_.faultType_ == Fault::STR))
-				{
-					val = D; // logic D  (1/0)
-				}
+				val = activateStuckAt(val, currentTargetFault_.faultType_);
 				return val;
 			case Gate::INV:
 				val = pCircuit_->circuitGates_[gate.faninVector_[0]].atpgVal_;
 				if (faultyLine == 0)
 				{
 					val = cINV(val);
-					if (val == L && (currentTargetFault_.faultType_ == Fault::SA1 || currentTargetFault_.faultType_ == Fault::STF))
-					{
-						val = B;
-					}
-					if (val == H && (currentTargetFault_.faultType_ == Fault::SA0 || currentTargetFault_.faultType_ == Fault::STR))
-					{
-						val = D;
-					}
+					val = activateStuckAt(val, currentTargetFault_.faultType_);
 					return val;
 				}
 				else
 				{
-					if (val == L && (currentTargetFault_.faultType_ == Fault::SA1 || currentTargetFault_.faultType_ == Fault::STF))
-					{
-						val = B;
-					}
-					if (val == H && (currentTargetFault_.faultType_ == Fault::SA0 || currentTargetFault_.faultType_ == Fault::STR))
-					{
-						val = D;
-					}
+					val = activateStuckAt(val, currentTargetFault_.faultType_);
 					return cINV(val);
 				}
 			case Gate::AND2:
@@ -464,28 +444,12 @@ namespace CoreNs
 						val = cAND2(val, pCircuit_->circuitGates_[gate.faninVector_[i]].atpgVal_);
 					}
 
-					if (val == L && (currentTargetFault_.faultType_ == Fault::SA1 || currentTargetFault_.faultType_ == Fault::STF))
-					{
-						val = B;
-					}
-
-					if (val == H && (currentTargetFault_.faultType_ == Fault::SA0 || currentTargetFault_.faultType_ == Fault::STR))
-					{
-						val = D;
-					}
+					val = activateStuckAt(val, currentTargetFault_.faultType_);
 				}
 				else
 				{
 					val = pCircuit_->circuitGates_[gate.faninVector_[faultyLine - 1]].atpgVal_;
-					if (val == L && (currentTargetFault_.faultType_ == Fault::SA1 || currentTargetFault_.faultType_ == Fault::STF))
-					{
-						val = B;
-					}
-
-					if (val == H && (currentTargetFault_.faultType_ == Fault::SA0 || currentTargetFault_.faultType_ == Fault::STR))
-					{
-						val = D;
-					}
+					val = activateStuckAt(val, currentTargetFault_.faultType_);
 
 					for (int i = 0; i < gate.numFI_; ++i)
 					{
@@ -508,28 +472,12 @@ namespace CoreNs
 					}
 
 					val = cINV(val);
-					if (val == L && (currentTargetFault_.faultType_ == Fault::SA1 || currentTargetFault_.faultType_ == Fault::STF))
-					{
-						val = B;
-					}
-
-					if (val == H && (currentTargetFault_.faultType_ == Fault::SA0 || currentTargetFault_.faultType_ == Fault::STR))
-					{
-						val = D;
-					}
+					val = activateStuckAt(val, currentTargetFault_.faultType_);
 				}
 				else
 				{
 					val = pCircuit_->circuitGates_[gate.faninVector_[faultyLine - 1]].atpgVal_;
-					if (val == L && (currentTargetFault_.faultType_ == Fault::SA1 || currentTargetFault_.faultType_ == Fault::STF))
-					{
-						val = B;
-					}
-
-					if (val == H && (currentTargetFault_.faultType_ == Fault::SA0 || currentTargetFault_.faultType_ == Fault::STR))
-					{
-						val = D;
-					}
+					val = activateStuckAt(val, currentTargetFault_.faultType_);
 
 					for (int i = 0; i < gate.numFI_; ++i)
 					{
@@ -552,28 +500,12 @@ namespace CoreNs
 						val = cOR2(val, pCircuit_->circuitGates_[gate.faninVector_[i]].atpgVal_);
 					}
 
-					if (val == L && (currentTargetFault_.faultType_ == Fault::SA1 || currentTargetFault_.faultType_ == Fault::STF))
-					{
-						val = B;
-					}
-
-					if (val == H && (currentTargetFault_.faultType_ == Fault::SA0 || currentTargetFault_.faultType_ == Fault::STR))
-					{
-						val = D;
-					}
+					val = activateStuckAt(val, currentTargetFault_.faultType_);
 				}
 				else
 				{
 					val = pCircuit_->circuitGates_[gate.faninVector_[faultyLine - 1]].atpgVal_;
-					if (val == L && (currentTargetFault_.faultType_ == Fault::SA1 || currentTargetFault_.faultType_ == Fault::STF))
-					{
-						val = B;
-					}
-
-					if (val == H && (currentTargetFault_.faultType_ == Fault::SA0 || currentTargetFault_.faultType_ == Fault::STR))
-					{
-						val = D;
-					}
+					val = activateStuckAt(val, currentTargetFault_.faultType_);
 
 					for (int i = 0; i < gate.numFI_; ++i)
 					{
@@ -597,26 +529,12 @@ namespace CoreNs
 
 					val = cINV(val);
 
-					if (val == L && (currentTargetFault_.faultType_ == Fault::SA1 || currentTargetFault_.faultType_ == Fault::STF))
-					{
-						val = B;
-					}
-					if (val == H && (currentTargetFault_.faultType_ == Fault::SA0 || currentTargetFault_.faultType_ == Fault::STR))
-					{
-						val = D;
-					}
+					val = activateStuckAt(val, currentTargetFault_.faultType_);
 				}
 				else
 				{
 					val = pCircuit_->circuitGates_[gate.faninVector_[faultyLine - 1]].atpgVal_;
-					if (val == L && (currentTargetFault_.faultType_ == Fault::SA1 || currentTargetFault_.faultType_ == Fault::STF))
-					{
-						val = B;
-					}
-					if (val == H && (currentTargetFault_.faultType_ == Fault::SA0 || currentTargetFault_.faultType_ == Fault::STR))
-					{
-						val = D;
-					}
+					val = activateStuckAt(val, currentTargetFault_.faultType_);
 					for (int i = 0; i < gate.numFI_; ++i)
 					{
 						if (i != faultyLine - 1)
@@ -640,26 +558,12 @@ namespace CoreNs
 						val = cXOR3(pCircuit_->circuitGates_[gate.faninVector_[0]].atpgVal_, pCircuit_->circuitGates_[gate.faninVector_[1]].atpgVal_, pCircuit_->circuitGates_[gate.faninVector_[2]].atpgVal_);
 					}
 
-					if (val == L && (currentTargetFault_.faultType_ == Fault::SA1 || currentTargetFault_.faultType_ == Fault::STF))
-					{
-						val = B;
-					}
-					if (val == H && (currentTargetFault_.faultType_ == Fault::SA0 || currentTargetFault_.faultType_ == Fault::STR))
-					{
-						val = D;
-					}
+					val = activateStuckAt(val, currentTargetFault_.faultType_);
 				}
 				else
 				{
 					val = pCircuit_->circuitGates_[gate.faninVector_[faultyLine - 1]].atpgVal_;
-					if (val == L && (currentTargetFault_.faultType_ == Fault::SA1 || currentTargetFault_.faultType_ == Fault::STF))
-					{
-						val = B;
-					}
-					if (val == H && (currentTargetFault_.faultType_ == Fault::SA0 || currentTargetFault_.faultType_ == Fault::STR))
-					{
-						val = D;
-					}
+					val = activateStuckAt(val, currentTargetFault_.faultType_);
 
 					if (gate.gateType_ == Gate::XOR2)
 					{
@@ -719,26 +623,12 @@ namespace CoreNs
 						val = cXNOR3(pCircuit_->circuitGates_[gate.faninVector_[0]].atpgVal_, pCircuit_->circuitGates_[gate.faninVector_[1]].atpgVal_, pCircuit_->circuitGates_[gate.faninVector_[2]].atpgVal_);
 					}
 
-					if (val == L && (currentTargetFault_.faultType_ == Fault::SA1 || currentTargetFault_.faultType_ == Fault::STF))
-					{
-						val = B;
-					}
-					if (val == H && (currentTargetFault_.faultType_ == Fault::SA0 || currentTargetFault_.faultType_ == Fault::STR))
-					{
-						val = D;
-					}
+					val = activateStuckAt(val, currentTargetFault_.faultType_);
 				}
 				else
 				{
 					val = pCircuit_->circuitGates_[gate.faninVector_[faultyLine - 1]].atpgVal_;
-					if (val == L && (currentTargetFault_.faultType_ == Fault::SA1 || currentTargetFault_.faultType_ == Fault::STF))
-					{
-						val = B;
-					}
-					if (val == H && (currentTargetFault_.faultType_ == Fault::SA0 || currentTargetFault_.faultType_ == Fault::STR))
-					{
-						val = D;
-					}
+					val = activateStuckAt(val, currentTargetFault_.faultType_);
 
 					if (gate.gateType_ == Gate::XNOR2)
 					{
@@ -796,25 +686,18 @@ namespace CoreNs
 					Value v = pCircuit_->circuitGates_[gate.faninVector_[idx]].atpgVal_;
 					if (idx + 1 == faultyLine)
 					{
-						if (v == L && (currentTargetFault_.faultType_ == Fault::SA1 || currentTargetFault_.faultType_ == Fault::STF))
-						{
-							v = B;
-						}
-						if (v == H && (currentTargetFault_.faultType_ == Fault::SA0 || currentTargetFault_.faultType_ == Fault::STR))
-						{
-							v = D;
-						}
+						v = activateStuckAt(v, currentTargetFault_.faultType_);
 					}
 					return v;
 				};
 				const Value a = stuckInput(0);
 				const Value b = stuckInput(1);
 				const Value s = stuckInput(2);
-				if (useNineValuedLogic_ ? atpgGoodIsLow(s) : s == L)
+				if (useNineValuedLogic_ ? atpgGoodEquals(s, L) : s == L)
 				{
 					return a;
 				}
-				if (useNineValuedLogic_ ? atpgGoodIsHigh(s) : s == H)
+				if (useNineValuedLogic_ ? atpgGoodEquals(s, H) : s == H)
 				{
 					return b;
 				}
@@ -848,9 +731,29 @@ namespace CoreNs
 		return X;
 	}
 
+	inline bool Atpg::reconcileGateAtpgVal(Value &stored, const Value &evaluated) const
+	{
+		if (!useNineValuedLogic_)
+		{
+			if (stored == X)
+			{
+				stored = evaluated;
+				return true;
+			}
+			return stored == evaluated || evaluated == X;
+		}
+		const Value merged = reconcileAtpgValue(stored, evaluated);
+		if (merged == I)
+		{
+			return false;
+		}
+		stored = merged;
+		return true;
+	}
+
 	inline bool Atpg::hasAtpgFaultEffect(const Value &value) const
 	{
-		return useNineValuedLogic_ ? hasFaultEffect(value) : (value == D || value == B);
+		return useNineValuedLogic_ ? hasFaultEffect(value) : isSensitiveValue(value);
 	}
 
 	inline Value Atpg::patternFromAtpgVal(const Value &value) const

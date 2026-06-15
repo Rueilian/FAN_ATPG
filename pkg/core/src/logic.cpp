@@ -154,6 +154,44 @@ Value CoreNs::atpgToPatternValue(const Value &value)
 	}
 }
 
+Value CoreNs::activateStuckAt(const Value &value, const int &faultType)
+{
+	if (isSensitiveValue(value))
+	{
+		return value;
+	}
+	if ((faultType == 1 || faultType == 3) && atpgGoodEquals(value, L))
+	{
+		return B;
+	}
+	if ((faultType == 0 || faultType == 2) && atpgGoodEquals(value, H))
+	{
+		return D;
+	}
+	return value;
+}
+
+Value CoreNs::reconcileAtpgValue(const Value &stored, const Value &evaluated)
+{
+	if (stored == evaluated)
+	{
+		return stored;
+	}
+	if (stored == X)
+	{
+		return evaluated;
+	}
+	if (evaluated == X)
+	{
+		return stored;
+	}
+	if (!atpgValuesConsistent(stored, evaluated))
+	{
+		return I;
+	}
+	return atpgIntersect(stored, evaluated);
+}
+
 void CoreNs::printValue(const Value &value, std::ostream &out)
 {
 	switch (value)

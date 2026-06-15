@@ -123,9 +123,24 @@ namespace CoreNs
 		return X;
 	}
 
+	inline bool atpgGoodEquals(const Value &value, const Value &binaryValue)
+	{
+		if (binaryValue == L)
+		{
+			return value == L || value == G0 || value == B;
+		}
+		if (binaryValue == H)
+		{
+			return value == H || value == G1 || value == D;
+		}
+		return false;
+	}
+
 	bool atpgValuesConsistent(const Value &a, const Value &b);
 	Value atpgIntersect(const Value &a, const Value &b);
 	Value atpgToPatternValue(const Value &value);
+	Value activateStuckAt(const Value &value, const int &faultType);
+	Value reconcileAtpgValue(const Value &stored, const Value &evaluated);
 
 	void printValue(const Value &value, std::ostream &out = std::cout);
 	void printParallelValue(const ParallelValue &parallelValue, std::ostream &out = std::cout);

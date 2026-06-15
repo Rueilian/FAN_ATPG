@@ -1057,8 +1057,13 @@ void Atpg::StuckAtFaultATPG(FaultPtrList &faultPtrListForGen, PatternProcessor *
 				}
 
 				Gate *pGateForActivation = getGateForFaultActivation(*pFault);
-				if (((pGateForActivation->atpgVal_ == L) && (pFault->faultType_ == Fault::SA0)) ||
-					((pGateForActivation->atpgVal_ == H) && (pFault->faultType_ == Fault::SA1)))
+				const bool alreadyStuckAtValue =
+					useNineValuedLogic_
+						? ((atpgGoodEquals(pGateForActivation->atpgVal_, L) && pFault->faultType_ == Fault::SA0) ||
+							 (atpgGoodEquals(pGateForActivation->atpgVal_, H) && pFault->faultType_ == Fault::SA1))
+						: ((pGateForActivation->atpgVal_ == L && pFault->faultType_ == Fault::SA0) ||
+							 (pGateForActivation->atpgVal_ == H && pFault->faultType_ == Fault::SA1));
+				if (alreadyStuckAtValue)
 				{
 					continue;
 				}
@@ -1214,9 +1219,27 @@ void Atpg::setGateAtpgValAndRunImplication(Gate &gate, const Value &val)
 			isInEventStack_[gateID] = 0;
 			Gate &currGate = pCircuit_->circuitGates_[gateID];
 			Value newValue = evaluateGoodVal(currGate);
-			if (currGate.atpgVal_ != newValue)
+			Value oldValue = currGate.atpgVal_;
+			bool changed = false;
+			if (useNineValuedLogic_)
+			{
+				if (reconcileGateAtpgVal(currGate.atpgVal_, newValue))
+				{
+					changed = currGate.atpgVal_ != oldValue;
+				}
+				else
+				{
+					currGate.atpgVal_ = newValue;
+					changed = true;
+				}
+			}
+			else if (currGate.atpgVal_ != newValue)
 			{
 				currGate.atpgVal_ = newValue;
+				changed = true;
+			}
+			if (changed)
+			{
 				for (int j = 0; j < currGate.numFO_; ++j)
 				{
 					Gate &og = pCircuit_->circuitGates_[currGate.fanoutVector_[j]];
@@ -2384,7 +2407,7 @@ Atpg::IMPLICATION_STATUS Atpg::doOneGateBackwardImplication(Gate *pGate)
 		Gate *pB = &pCircuit_->circuitGates_[pGate->faninVector_[1]];
 		Gate *pS = &pCircuit_->circuitGates_[pGate->faninVector_[2]];
 		implicationStatus = BACKWARD;
-		if (pS->atpgVal_ == L)
+		if (useNineValuedLogic_ ? atpgGoodEquals(pS->atpgVal_, L) : pS->atpgVal_ == L)
 		{
 			if (pA->atpgVal_ == X && pGate->atpgVal_ != X)
 			{
@@ -2404,7 +2427,7 @@ Atpg::IMPLICATION_STATUS Atpg::doOneGateBackwardImplication(Gate *pGate)
 				implicationStatus = FORWARD;
 			}
 		}
-		else if (pS->atpgVal_ == H)
+		else if (useNineValuedLogic_ ? atpgGoodEquals(pS->atpgVal_, H) : pS->atpgVal_ == H)
 		{
 			if (pB->atpgVal_ == X && pGate->atpgVal_ != X)
 			{
@@ -2427,7 +2450,7 @@ Atpg::IMPLICATION_STATUS Atpg::doOneGateBackwardImplication(Gate *pGate)
 		else if (hasAtpgFaultEffect(pGate->atpgVal_))
 		{
 			const Value goodOut = atpgGoodRepresentative(pGate->atpgVal_);
-			if (pS->atpgVal_ == L && pA->atpgVal_ == X)
+			if ((useNineValuedLogic_ ? atpgGoodEquals(pS->atpgVal_, L) : pS->atpgVal_ == L) && pA->atpgVal_ == X)
 			{
 				if (isUncontrollableSource(pA))
 				{
@@ -2439,7 +2462,7 @@ Atpg::IMPLICATION_STATUS Atpg::doOneGateBackwardImplication(Gate *pGate)
 				pushGateToEventStack(pGate->faninVector_[0]);
 				pushGateFanoutsToEventStack(pGate->faninVector_[0]);
 			}
-			else if (pS->atpgVal_ == H && pB->atpgVal_ == X)
+			else if ((useNineValuedLogic_ ? atpgGoodEquals(pS->atpgVal_, H) : pS->atpgVal_ == H) && pB->atpgVal_ == X)
 			{
 				if (isUncontrollableSource(pB))
 				{
@@ -2453,7 +2476,7 @@ Atpg::IMPLICATION_STATUS Atpg::doOneGateBackwardImplication(Gate *pGate)
 			}
 			else if (pS->atpgVal_ == X)
 			{
-				if (pA->atpgVal_ == X && pB->atpgVal_ == goodOut)
+				if (pA->atpgVal_ == X && (useNineValuedLogic_ ? atpgValuesConsistent(pB->atpgVal_, goodOut) : pB->atpgVal_ == goodOut))
 				{
 					if (isUncontrollableSource(pS) || isUncontrollableSource(pA))
 					{
@@ -2469,7 +2492,7 @@ Atpg::IMPLICATION_STATUS Atpg::doOneGateBackwardImplication(Gate *pGate)
 					pushGateToEventStack(pGate->faninVector_[0]);
 					pushGateFanoutsToEventStack(pGate->faninVector_[0]);
 				}
-				else if (pB->atpgVal_ == X && pA->atpgVal_ == goodOut)
+				else if (pB->atpgVal_ == X && (useNineValuedLogic_ ? atpgValuesConsistent(pA->atpgVal_, goodOut) : pA->atpgVal_ == goodOut))
 				{
 					if (isUncontrollableSource(pS) || isUncontrollableSource(pB))
 					{
@@ -2499,14 +2522,14 @@ Atpg::IMPLICATION_STATUS Atpg::doOneGateBackwardImplication(Gate *pGate)
 		}
 		else if (pGate->atpgVal_ != X)
 		{
-			if (pA->atpgVal_ == pGate->atpgVal_ && pB->atpgVal_ == X)
+			if ((useNineValuedLogic_ ? atpgValuesConsistent(pA->atpgVal_, pGate->atpgVal_) : pA->atpgVal_ == pGate->atpgVal_) && pB->atpgVal_ == X)
 			{
 				if (isUncontrollableSource(pB))
 				{
 					return CONFLICT;
 				}
 				pS->atpgVal_ = L;
-				pB->atpgVal_ = (pA->atpgVal_ == H) ? L : H;
+				pB->atpgVal_ = (useNineValuedLogic_ ? atpgGoodEquals(pA->atpgVal_, H) : pA->atpgVal_ == H) ? L : H;
 				gateID_to_valModified_[pGate->gateId_] = 1;
 				backtrackImplicatedGateIDs_.push_back(pS->gateId_);
 				backtrackImplicatedGateIDs_.push_back(pB->gateId_);
@@ -2516,14 +2539,14 @@ Atpg::IMPLICATION_STATUS Atpg::doOneGateBackwardImplication(Gate *pGate)
 				pushGateFanoutsToEventStack(pGate->faninVector_[1]);
 				implicationStatus = BACKWARD;
 			}
-			else if (pB->atpgVal_ == pGate->atpgVal_ && pA->atpgVal_ == X)
+			else if ((useNineValuedLogic_ ? atpgValuesConsistent(pB->atpgVal_, pGate->atpgVal_) : pB->atpgVal_ == pGate->atpgVal_) && pA->atpgVal_ == X)
 			{
 				if (isUncontrollableSource(pA))
 				{
 					return CONFLICT;
 				}
 				pS->atpgVal_ = H;
-				pA->atpgVal_ = (pB->atpgVal_ == H) ? L : H;
+				pA->atpgVal_ = (useNineValuedLogic_ ? atpgGoodEquals(pB->atpgVal_, H) : pB->atpgVal_ == H) ? L : H;
 				gateID_to_valModified_[pGate->gateId_] = 1;
 				backtrackImplicatedGateIDs_.push_back(pS->gateId_);
 				backtrackImplicatedGateIDs_.push_back(pA->gateId_);
@@ -2550,7 +2573,7 @@ Atpg::IMPLICATION_STATUS Atpg::doOneGateBackwardImplication(Gate *pGate)
 		Value OutputControlVal = pGate->getOutputCtrlValue();
 		Value InputControlVal = pGate->getInputCtrlValue();
 
-		if (pGate->atpgVal_ == OutputControlVal)
+		if (useNineValuedLogic_ ? atpgGoodEquals(pGate->atpgVal_, OutputControlVal) : pGate->atpgVal_ == OutputControlVal)
 		{
 			Value InputNonControlVal = pGate->getInputNonCtrlValue();
 
@@ -2933,7 +2956,7 @@ bool Atpg::checkIfFaultHasPropagatedToPO(bool &faultHasPropagatedToPO)
 		const Gate &gate = pCircuit_->circuitGates_[gateID];
 		if (gate.gateType_ == Gate::PO)
 		{
-			if (hasAtpgFaultEffect(gate.atpgVal_))
+			if (isSensitiveValue(gate.atpgVal_))
 			{
 				faultHasPropagatedToPO = true;
 				return true;
@@ -2945,7 +2968,7 @@ bool Atpg::checkIfFaultHasPropagatedToPO(bool &faultHasPropagatedToPO)
 			{
 				continue;
 			}
-			if (hasAtpgFaultEffect(gate.atpgVal_))
+			if (isSensitiveValue(gate.atpgVal_))
 			{
 				faultHasPropagatedToPO = true;
 				return true;
@@ -3515,11 +3538,11 @@ int Atpg::doUniquePathSensitization(Gate &gate)
 				if (gate.gateType_ == Gate::MUX && gate.numFI_ >= 3)
 				{
 					Gate *pS = &pCircuit_->circuitGates_[gate.faninVector_[2]];
-					if (i == 0 && pS->atpgVal_ == H)
+					if (i == 0 && (useNineValuedLogic_ ? atpgGoodEquals(pS->atpgVal_, H) : pS->atpgVal_ == H))
 					{
 						continue;
 					}
-					if (i == 1 && pS->atpgVal_ == L)
+					if (i == 1 && (useNineValuedLogic_ ? atpgGoodEquals(pS->atpgVal_, L) : pS->atpgVal_ == L))
 					{
 						continue;
 					}
@@ -3601,11 +3624,11 @@ int Atpg::doUniquePathSensitization(Gate &gate)
 					if (pNextGate->gateType_ == Gate::MUX && pNextGate->numFI_ >= 3)
 					{
 						Gate *pS = &pCircuit_->circuitGates_[pNextGate->faninVector_[2]];
-						if (i == 0 && pS->atpgVal_ == H)
+						if (i == 0 && (useNineValuedLogic_ ? atpgGoodEquals(pS->atpgVal_, H) : pS->atpgVal_ == H))
 						{
 							continue;
 						}
-						if (i == 1 && pS->atpgVal_ == L)
+						if (i == 1 && (useNineValuedLogic_ ? atpgGoodEquals(pS->atpgVal_, L) : pS->atpgVal_ == L))
 						{
 							continue;
 						}
@@ -3662,11 +3685,11 @@ int Atpg::doUniquePathSensitization(Gate &gate)
 						if (pNextGate->gateType_ == Gate::MUX && pNextGate->numFI_ >= 3)
 						{
 							Gate *pS = &pCircuit_->circuitGates_[pNextGate->faninVector_[2]];
-							if (i == 0 && pS->atpgVal_ == H)
+							if (i == 0 && (useNineValuedLogic_ ? atpgGoodEquals(pS->atpgVal_, H) : pS->atpgVal_ == H))
 							{
 								continue;
 							}
-							if (i == 1 && pS->atpgVal_ == L)
+							if (i == 1 && (useNineValuedLogic_ ? atpgGoodEquals(pS->atpgVal_, L) : pS->atpgVal_ == L))
 							{
 								continue;
 							}
@@ -3864,7 +3887,32 @@ int Atpg::setFaultyGate(Fault &fault)
 
 	if (!isOutputFault)
 	{
-		if (FaultyValue == D && pFaultyLine->atpgVal_ != L)
+		if (useNineValuedLogic_)
+		{
+			if (FaultyValue == D)
+			{
+				if (atpgGoodEquals(pFaultyLine->atpgVal_, L))
+				{
+					return -1;
+				}
+				if (!atpgGoodEquals(pFaultyLine->atpgVal_, H))
+				{
+					pFaultyLine->atpgVal_ = H;
+				}
+			}
+			else if (FaultyValue == B)
+			{
+				if (atpgGoodEquals(pFaultyLine->atpgVal_, H))
+				{
+					return -1;
+				}
+				if (!atpgGoodEquals(pFaultyLine->atpgVal_, L))
+				{
+					pFaultyLine->atpgVal_ = L;
+				}
+			}
+		}
+		else if (FaultyValue == D && pFaultyLine->atpgVal_ != L)
 		{
 			pFaultyLine->atpgVal_ = H;
 		}
@@ -3950,7 +3998,7 @@ int Atpg::setFaultyGate(Fault &fault)
 					pS->atpgVal_ = L;
 					backtrackImplicatedGateIDs_.push_back(pS->gateId_);
 				}
-				else if (pS->atpgVal_ != L)
+				else if (useNineValuedLogic_ ? !atpgGoodEquals(pS->atpgVal_, L) : pS->atpgVal_ != L)
 				{
 					return -1;
 				}
@@ -3967,7 +4015,7 @@ int Atpg::setFaultyGate(Fault &fault)
 					pS->atpgVal_ = H;
 					backtrackImplicatedGateIDs_.push_back(pS->gateId_);
 				}
-				else if (pS->atpgVal_ != H)
+				else if (useNineValuedLogic_ ? !atpgGoodEquals(pS->atpgVal_, H) : pS->atpgVal_ != H)
 				{
 					return -1;
 				}
@@ -3997,9 +4045,9 @@ int Atpg::setFaultyGate(Fault &fault)
 					pB->atpgVal_ = L;
 					backtrackImplicatedGateIDs_.push_back(pB->gateId_);
 				}
-				if (pA->atpgVal_ == pB->atpgVal_)
+				if (useNineValuedLogic_ ? atpgValuesConsistent(pA->atpgVal_, pB->atpgVal_) : pA->atpgVal_ == pB->atpgVal_)
 				{
-					pB->atpgVal_ = (pA->atpgVal_ == H) ? L : H;
+					pB->atpgVal_ = (useNineValuedLogic_ ? atpgGoodEquals(pA->atpgVal_, H) : pA->atpgVal_ == H) ? L : H;
 					backtrackImplicatedGateIDs_.push_back(pB->gateId_);
 				}
 				pFaultyGate->atpgVal_ = FaultyValue;
@@ -4057,7 +4105,12 @@ int Atpg::setFaultyGate(Fault &fault)
 	}
 	else
 	{ // output fault
-		if ((FaultyValue == D && pFaultyGate->atpgVal_ == L) || (FaultyValue == B && pFaultyGate->atpgVal_ == H))
+		const bool outputAlreadyStuckAtValue =
+			useNineValuedLogic_
+				? ((FaultyValue == D && atpgGoodEquals(pFaultyGate->atpgVal_, L)) ||
+					 (FaultyValue == B && atpgGoodEquals(pFaultyGate->atpgVal_, H)))
+				: ((FaultyValue == D && pFaultyGate->atpgVal_ == L) || (FaultyValue == B && pFaultyGate->atpgVal_ == H));
+		if (outputAlreadyStuckAtValue)
 		{
 			return -1;
 		}
@@ -4312,7 +4365,7 @@ void Atpg::fanoutFreeBacktrace(Gate *pGate)
 			Gate *pB = &pCircuit_->circuitGates_[pGate->faninVector_[1]];
 			Gate *pS = &pCircuit_->circuitGates_[pGate->faninVector_[2]];
 			Value Val = cXOR2(pGate->atpgVal_, vInv);
-			if (pS->atpgVal_ == L)
+			if (useNineValuedLogic_ ? atpgGoodEquals(pS->atpgVal_, L) : pS->atpgVal_ == L)
 			{
 				if (!isUncontrollableSource(pA) && pA != firstTimeFrameHeadLine_)
 				{
@@ -4320,7 +4373,7 @@ void Atpg::fanoutFreeBacktrace(Gate *pGate)
 					currentObjectives_.push_back(pA->gateId_);
 				}
 			}
-			else if (pS->atpgVal_ == H)
+			else if (useNineValuedLogic_ ? atpgGoodEquals(pS->atpgVal_, H) : pS->atpgVal_ == H)
 			{
 				if (!isUncontrollableSource(pB) && pB != firstTimeFrameHeadLine_)
 				{
@@ -4504,11 +4557,11 @@ Atpg::BACKTRACE_RESULT Atpg::multipleBacktrace(BACKTRACE_STATUS atpgStatus, int 
 							int nn1;
 						};
 						std::vector<MuxFaninTask> tasks;
-						if (useNineValuedLogic_ ? atpgGoodIsLow(pS->atpgVal_) : pS->atpgVal_ == L)
+						if (useNineValuedLogic_ ? atpgGoodEquals(pS->atpgVal_, L) : pS->atpgVal_ == L)
 						{
 							tasks.push_back({pA, n0, n1});
 						}
-						else if (useNineValuedLogic_ ? atpgGoodIsHigh(pS->atpgVal_) : pS->atpgVal_ == H)
+						else if (useNineValuedLogic_ ? atpgGoodEquals(pS->atpgVal_, H) : pS->atpgVal_ == H)
 						{
 							tasks.push_back({pB, n0, n1});
 						}
@@ -4809,7 +4862,7 @@ Value Atpg::assignBacktraceValue(int &n0, int &n1, const Gate &gate)
 				val = pCircuit_->circuitGates_[gate.faninVector_[1]].atpgVal_;
 			}
 
-			if (val == H)
+			if (useNineValuedLogic_ ? atpgGoodEquals(val, H) : val == H)
 			{
 				n0 = gateID_to_n1_[gate.gateId_];
 				n1 = gateID_to_n0_[gate.gateId_];
@@ -4834,7 +4887,8 @@ Value Atpg::assignBacktraceValue(int &n0, int &n1, const Gate &gate)
 			v1 = 0;
 			for (int i = 0; i < gate.numFI_; ++i)
 			{
-				if (pCircuit_->circuitGates_[gate.faninVector_[0]].atpgVal_ == H)
+				const Value faninVal = pCircuit_->circuitGates_[gate.faninVector_[i]].atpgVal_;
+				if (useNineValuedLogic_ ? atpgGoodEquals(faninVal, H) : faninVal == H)
 				{
 					++v1;
 				}
@@ -4864,6 +4918,14 @@ Value Atpg::assignBacktraceValue(int &n0, int &n1, const Gate &gate)
 				const Gate &pS = pCircuit_->circuitGates_[gate.faninVector_[2]];
 				n0 = gateID_to_n0_[gate.gateId_];
 				n1 = gateID_to_n1_[gate.gateId_];
+				if (useNineValuedLogic_ ? atpgGoodEquals(pS.atpgVal_, L) : pS.atpgVal_ == L)
+				{
+					return L;
+				}
+				if (useNineValuedLogic_ ? atpgGoodEquals(pS.atpgVal_, H) : pS.atpgVal_ == H)
+				{
+					return H;
+				}
 				if (pS.atpgVal_ == X)
 				{
 					return L;
@@ -4993,11 +5055,11 @@ Gate *Atpg::findEasiestInput(Gate *pGate, Value atpgValOfpGate)
 		{
 			return pS;
 		}
-		if (pS->atpgVal_ == L)
+		if (useNineValuedLogic_ ? atpgGoodEquals(pS->atpgVal_, L) : pS->atpgVal_ == L)
 		{
 			return &pCircuit_->circuitGates_[pGate->faninVector_[0]];
 		}
-		if (pS->atpgVal_ == H)
+		if (useNineValuedLogic_ ? atpgGoodEquals(pS->atpgVal_, H) : pS->atpgVal_ == H)
 		{
 			return &pCircuit_->circuitGates_[pGate->faninVector_[1]];
 		}
@@ -5147,7 +5209,7 @@ Atpg::IMPLICATION_STATUS Atpg::evaluateAndSetGateAtpgVal(Gate *pGate)
 		}
 		return FORWARD;
 	}
-	else if (pGate->atpgVal_ == X)
+	if (pGate->atpgVal_ == X)
 	{
 		// set it to the evaluated value.
 		pGate->atpgVal_ = Val;
@@ -5156,11 +5218,28 @@ Atpg::IMPLICATION_STATUS Atpg::evaluateAndSetGateAtpgVal(Gate *pGate)
 		pushGateFanoutsToEventStack(pGate->gateId_);
 		return FORWARD;
 	}
-	else if (Val != X)
-	{ // Good value is different to the gate output, return CONFLICT
-		return CONFLICT;
+	if (Val == X)
+	{
+		return doOneGateBackwardImplication(pGate); // atpgVal != X && Val == X
 	}
-	return doOneGateBackwardImplication(pGate); // atpgVal != X && Val == X
+	if (useNineValuedLogic_)
+	{
+		const Value oldValue = pGate->atpgVal_;
+		if (reconcileGateAtpgVal(pGate->atpgVal_, Val))
+		{
+			if (pGate->atpgVal_ != oldValue)
+			{
+				backtrackImplicatedGateIDs_.push_back(pGate->gateId_);
+				pushGateFanoutsToEventStack(pGate->gateId_);
+			}
+			if (pGate->atpgVal_ != X)
+			{
+				gateID_to_valModified_[pGate->gateId_] = 1;
+			}
+			return FORWARD;
+		}
+	}
+	return CONFLICT; // Good value is different to the gate output.
 }
 
 // **************************************************************************
@@ -5224,6 +5303,7 @@ Atpg::IMPLICATION_STATUS Atpg::evaluateAndSetFaultyGateAtpgVal(Gate *pGate)
 				Gate *pImpGate = &pCircuit_->circuitGates_[pGate->faninVector_[ImpPtr]];
 
 				// set ImpVal if pGate is not XOR or XNOR
+				const Value goodRepresentative = useNineValuedLogic_ ? atpgGoodRepresentative(pGate->atpgVal_) : X;
 				if (pGate->atpgVal_ == D)
 				{
 					ImpVal = H;
@@ -5231,6 +5311,10 @@ Atpg::IMPLICATION_STATUS Atpg::evaluateAndSetFaultyGateAtpgVal(Gate *pGate)
 				else if (pGate->atpgVal_ == B)
 				{
 					ImpVal = L;
+				}
+				else if (useNineValuedLogic_ && goodRepresentative != X)
+				{
+					ImpVal = goodRepresentative;
 				}
 				else
 				{
@@ -5244,11 +5328,11 @@ Atpg::IMPLICATION_STATUS Atpg::evaluateAndSetFaultyGateAtpgVal(Gate *pGate)
 					Gate *pS = &pCircuit_->circuitGates_[pGate->faninVector_[2]];
 					if (ImpPtr == 2)
 					{
-						ImpVal = (pA->atpgVal_ == ImpVal) ? L : H;
+						ImpVal = (useNineValuedLogic_ ? atpgValuesConsistent(pA->atpgVal_, ImpVal) : pA->atpgVal_ == ImpVal) ? L : H;
 					}
 					else if (ImpPtr == 0)
 					{
-						if (pS->atpgVal_ == H)
+						if (useNineValuedLogic_ ? atpgGoodEquals(pS->atpgVal_, H) : pS->atpgVal_ == H)
 						{
 							unjustifiedGateIDs_.push_back(pGate->gateId_);
 							return FORWARD;
@@ -5264,7 +5348,7 @@ Atpg::IMPLICATION_STATUS Atpg::evaluateAndSetFaultyGateAtpgVal(Gate *pGate)
 					}
 					else if (ImpPtr == 1)
 					{
-						if (pS->atpgVal_ == L)
+						if (useNineValuedLogic_ ? atpgGoodEquals(pS->atpgVal_, L) : pS->atpgVal_ == L)
 						{
 							unjustifiedGateIDs_.push_back(pGate->gateId_);
 							return FORWARD;
@@ -5339,6 +5423,20 @@ Atpg::IMPLICATION_STATUS Atpg::evaluateAndSetFaultyGateAtpgVal(Gate *pGate)
 		// forward setting
 		pushGateFanoutsToEventStack(pGate->gateId_);
 		backtrackImplicatedGateIDs_.push_back(pGate->gateId_);
+	}
+	else if (useNineValuedLogic_)
+	{
+		const Value oldValue = pGate->atpgVal_;
+		if (!reconcileGateAtpgVal(pGate->atpgVal_, Val))
+		{
+			return CONFLICT;
+		}
+		gateID_to_valModified_[pGate->gateId_] = 1;
+		if (pGate->atpgVal_ != oldValue)
+		{
+			pushGateFanoutsToEventStack(pGate->gateId_);
+			backtrackImplicatedGateIDs_.push_back(pGate->gateId_);
+		}
 	}
 	else
 	{
