@@ -1,0 +1,14 @@
+read_lib techlib/mod_nangate45.mdt
+read_netlist mod_netlist/b05.v
+set_nonscan_ff _1786_ _1787_ _1788_ _1789_ _1790_ _1791_ _1792_ _1793_ _1794_
+set_nine_valued_logic on
+build_circuit --frame 4
+set_fault_type saf
+add_fault -f /home/yenchulo/ScanForge/results/residual_faults_verify/b05_x10_after_T1_T2.faults
+set_per_target_timeout 5.0
+set_static_compression off
+set_dynamic_compression off
+run_atpg
+report_statistics > /home/yenchulo/ScanForge/FAN_ATPG/rpt_verify/b05_x10_t4_res.rpt
+report_fault > /home/yenchulo/ScanForge/FAN_ATPG/rpt_verify/b05_x10_t4_res_faults.txt
+exit

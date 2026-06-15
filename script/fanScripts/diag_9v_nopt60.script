@@ -1,0 +1,13 @@
+read_lib techlib/mod_nangate45.mdt
+read_netlist mod_netlist/b11.v
+set_nonscan_ff _2743_ _2744_ _2745_ _2746_ _2747_ _2748_ _2749_ _2750_ _2751_ 
+set_nine_valued_logic on
+build_circuit --frame 1
+set_fault_type saf
+add_fault --all
+set_per_target_timeout 0
+set_static_compression off
+set_dynamic_compression off
+run_atpg
+report_statistics > rpt/diag_9v_nopt60.rpt
+exit

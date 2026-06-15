@@ -87,6 +87,16 @@ namespace CoreNs
 		return value == X;
 	}
 
+	inline bool isDecisionNeeded(const Value &value)
+	{
+		return isFullyUnspecified(value);
+	}
+
+	inline bool isPartlySpecifiedAtpgValue(const Value &value)
+	{
+		return value == G0 || value == FO || value == F1 || value == G1;
+	}
+
 	// S1/S0 ¡X fully specified sensitive values (D-algorithm D/D').
 	inline bool isSensitiveValue(const Value &value)
 	{

@@ -48,7 +48,7 @@ interface_EXE = mdt_test.cpp     \
 				lht_pat_test.cpp \
 				vlog2pmt.cpp
 
-core_EXE =
+core_EXE = logic_test.cpp
 
 fan_EXE = main.cpp
 

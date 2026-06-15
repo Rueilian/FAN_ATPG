@@ -114,6 +114,18 @@ Value CoreNs::atpgIntersect(const Value &a, const Value &b)
 	{
 		return I;
 	}
+	if (a == b)
+	{
+		return a;
+	}
+	if (a == X)
+	{
+		return b;
+	}
+	if (b == X)
+	{
+		return a;
+	}
 	bool ag0, ag1, af0, af1, bg0, bg1, bf0, bf1;
 	valueSets(a, ag0, ag1, af0, af1);
 	valueSets(b, bg0, bg1, bf0, bf1);

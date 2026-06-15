@@ -669,7 +669,10 @@ void Atpg::resetBacktraceRequirement(const int gateID)
 
 bool Atpg::multipleBacktracePropagateFanin(Gate *pFaninGate, int nn0, int nn1, int &possibleFinalObjectiveID)
 {
-	if ((nn0 <= 0 && nn1 <= 0) || pFaninGate->atpgVal_ != X)
+	const bool faninNeedsBacktrace =
+		isDecisionNeeded(pFaninGate->atpgVal_) ||
+		(useNineValuedLogic_ && isPartlySpecifiedAtpgValue(pFaninGate->atpgVal_));
+	if ((nn0 <= 0 && nn1 <= 0) || !faninNeedsBacktrace)
 	{
 		return true;
 	}
@@ -687,7 +690,7 @@ bool Atpg::multipleBacktracePropagateFanin(Gate *pFaninGate, int nn0, int nn1, i
 		}
 		if (!mergeBacktraceRequirement(pFaninGate->gateId_, branchReq))
 		{
-			possibleFinalObjectiveID = -1;
+			possibleFinalObjectiveID = pFaninGate->gateId_;
 			return false;
 		}
 		setGaten0n1(pFaninGate->gateId_, gateID_to_n0_[pFaninGate->gateId_] + nn0, gateID_to_n1_[pFaninGate->gateId_] + nn1);
@@ -697,7 +700,7 @@ bool Atpg::multipleBacktracePropagateFanin(Gate *pFaninGate, int nn0, int nn1, i
 	{
 		if (!mergeBacktraceRequirement(pFaninGate->gateId_, branchReq))
 		{
-			possibleFinalObjectiveID = -1;
+			possibleFinalObjectiveID = pFaninGate->gateId_;
 			return false;
 		}
 		setGaten0n1(pFaninGate->gateId_, nn0, nn1);
@@ -1229,8 +1232,7 @@ void Atpg::setGateAtpgValAndRunImplication(Gate &gate, const Value &val)
 				}
 				else
 				{
-					currGate.atpgVal_ = newValue;
-					changed = true;
+					changed = false;
 				}
 			}
 			else if (currGate.atpgVal_ != newValue)
@@ -1873,11 +1875,13 @@ Gate *Atpg::initializePiDirectActivation(const Fault &targetFault, int piGateId,
 	initializeObjectivesAndFrontiers();
 	initializeCircuitWithFaultyGate(*gPi, isAtStageDTC);
 
-	if ((targetFault.faultType_ == Fault::SA0 || targetFault.faultType_ == Fault::STR) && gPi->atpgVal_ != L)
+	if ((targetFault.faultType_ == Fault::SA0 || targetFault.faultType_ == Fault::STR) &&
+			(useNineValuedLogic_ ? !atpgGoodEquals(gPi->atpgVal_, L) : gPi->atpgVal_ != L))
 	{
 		gPi->atpgVal_ = D;
 	}
-	if ((targetFault.faultType_ == Fault::SA1 || targetFault.faultType_ == Fault::STF) && gPi->atpgVal_ != H)
+	if ((targetFault.faultType_ == Fault::SA1 || targetFault.faultType_ == Fault::STF) &&
+			(useNineValuedLogic_ ? !atpgGoodEquals(gPi->atpgVal_, H) : gPi->atpgVal_ != H))
 	{
 		gPi->atpgVal_ = B;
 	}
@@ -1915,11 +1919,13 @@ Gate *Atpg::initializeForSinglePatternGeneration(Fault &targetFault, int &backwa
 	// currentTargetHeadLineFault_.gateID_ = -1; //bug report
 	if (gateID_to_lineType_[gFaultyLine->gateId_] == FREE_LINE)
 	{
-		if ((targetFault.faultType_ == Fault::SA0 || targetFault.faultType_ == Fault::STR) && gFaultyLine->atpgVal_ != L)
+		if ((targetFault.faultType_ == Fault::SA0 || targetFault.faultType_ == Fault::STR) &&
+				(useNineValuedLogic_ ? !atpgGoodEquals(gFaultyLine->atpgVal_, L) : gFaultyLine->atpgVal_ != L))
 		{
 			gFaultyLine->atpgVal_ = D;
 		}
-		if ((targetFault.faultType_ == Fault::SA1 || targetFault.faultType_ == Fault::STF) && gFaultyLine->atpgVal_ != H)
+		if ((targetFault.faultType_ == Fault::SA1 || targetFault.faultType_ == Fault::STF) &&
+				(useNineValuedLogic_ ? !atpgGoodEquals(gFaultyLine->atpgVal_, H) : gFaultyLine->atpgVal_ != H))
 		{
 			gFaultyLine->atpgVal_ = B;
 		}
@@ -2832,7 +2838,11 @@ bool Atpg::continuationMeaningful(Gate *pLastDFrontier)
 	// determine the pLastDFrontier should be changed or not
 	if (pLastDFrontier != NULL)
 	{
-		if (pLastDFrontier->atpgVal_ == X)
+		const Value frontierValue = pLastDFrontier->atpgVal_;
+		const bool frontierStillOpen =
+			isDecisionNeeded(frontierValue) ||
+			(useNineValuedLogic_ && isPartlySpecifiedAtpgValue(frontierValue));
+		if (frontierStillOpen)
 		{
 			fDFrontierChanged = false;
 		}
@@ -2956,7 +2966,7 @@ bool Atpg::checkIfFaultHasPropagatedToPO(bool &faultHasPropagatedToPO)
 		const Gate &gate = pCircuit_->circuitGates_[gateID];
 		if (gate.gateType_ == Gate::PO)
 		{
-			if (isSensitiveValue(gate.atpgVal_))
+			if (hasAtpgFaultEffect(gate.atpgVal_))
 			{
 				faultHasPropagatedToPO = true;
 				return true;
@@ -2968,7 +2978,7 @@ bool Atpg::checkIfFaultHasPropagatedToPO(bool &faultHasPropagatedToPO)
 			{
 				continue;
 			}
-			if (isSensitiveValue(gate.atpgVal_))
+			if (hasAtpgFaultEffect(gate.atpgVal_))
 			{
 				faultHasPropagatedToPO = true;
 				return true;
@@ -3168,7 +3178,7 @@ bool Atpg::findFinalObjective(BACKTRACE_STATUS &backtraceFlag, const bool &fault
 				// TAKE OUT A HEAD OBJECTIVE
 				pGate = &pCircuit_->circuitGates_[vecPop(headLineObjectives_)];
 				// IS THE HEAD LINE UNSPECIFIED?
-				if (pGate->atpgVal_ == X)
+				if (isDecisionNeeded(pGate->atpgVal_))
 				{ // YES
 					if (pGate->gateType_ == Gate::TIEX || pGate->gateType_ == Gate::TIEZ)
 					{
@@ -3949,7 +3959,11 @@ int Atpg::setFaultyGate(Fault &fault)
 					{
 						// If the value has already been set, it should be
 						// non-control value, otherwise the fault can't propagate
-						return -1;
+						if (!useNineValuedLogic_ ||
+								!atpgGoodEquals(pFaninGate->atpgVal_, pFaultyGate->getInputNonCtrlValue()))
+						{
+							return -1;
+						}
 					}
 				}
 				else
@@ -4598,7 +4612,10 @@ Atpg::BACKTRACE_RESULT Atpg::multipleBacktrace(BACKTRACE_STATUS atpgStatus, int 
 
 						// ignore the fanin gate that already set value
 						// (not unknown)
-						if (pFaninGate->atpgVal_ != X)
+						const bool faninNeedsBacktrace =
+							isDecisionNeeded(pFaninGate->atpgVal_) ||
+							(useNineValuedLogic_ && isPartlySpecifiedAtpgValue(pFaninGate->atpgVal_));
+						if (!faninNeedsBacktrace)
 						{
 							continue;
 						}
@@ -4645,7 +4662,7 @@ Atpg::BACKTRACE_RESULT Atpg::multipleBacktrace(BACKTRACE_STATUS atpgStatus, int 
 							}
 							if (!mergeBacktraceRequirement(pFaninGate->gateId_, backtraceCountsToValue(nn0, nn1)))
 							{
-								possibleFinalObjectiveID = -1;
+								possibleFinalObjectiveID = pFaninGate->gateId_;
 								return CONTRADICTORY;
 							}
 							// first find this fanout point,  add to
@@ -4706,7 +4723,7 @@ Atpg::BACKTRACE_RESULT Atpg::multipleBacktrace(BACKTRACE_STATUS atpgStatus, int 
 								}
 								if (!mergeBacktraceRequirement(pFaninGate->gateId_, backtraceCountsToValue(nn0, nn1)))
 								{
-									possibleFinalObjectiveID = -1;
+									possibleFinalObjectiveID = pFaninGate->gateId_;
 									return CONTRADICTORY;
 								}
 								// add gate into Current Objective set
@@ -4740,7 +4757,10 @@ Atpg::BACKTRACE_RESULT Atpg::multipleBacktrace(BACKTRACE_STATUS atpgStatus, int 
 				// if value of pCurrent is not X
 				// ignore the Fanout-Point Objective that already set value
 				// (not unknown), back to CHECK_AND_SELECT state
-				if (pCurrentObj->atpgVal_ != X)
+				const bool fanoutObjectiveResolved =
+					!isDecisionNeeded(pCurrentObj->atpgVal_) &&
+					!(useNineValuedLogic_ && isPartlySpecifiedAtpgValue(pCurrentObj->atpgVal_));
+				if (fanoutObjectiveResolved)
 				{
 					atpgStatus = CHECK_AND_SELECT;
 					break; // switch break
