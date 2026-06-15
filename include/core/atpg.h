@@ -209,7 +209,7 @@ namespace CoreNs
 		inline int vecPop(std::vector<int> &vec);
 		inline void vecDelete(std::vector<int> &list, const int &index);
 
-		// 5-Value logic evaluation functions
+		// Nine-valued logic evaluation functions (Muth 1976)
 		inline Value cINV(const Value &i1);
 		inline Value cAND2(const Value &i1, const Value &i2);
 		inline Value cAND3(const Value &i1, const Value &i2, const Value &i3);
@@ -358,11 +358,11 @@ namespace CoreNs
 			case Gate::XNOR3:
 				return cXNOR3(v[0], v[1], v[2]);
 			case Gate::MUX:
-				if (v[2] == L)
+				if (atpgGoodIsLow(v[2]))
 				{
 					return v[0];
 				}
-				if (v[2] == H)
+				if (atpgGoodIsHigh(v[2]))
 				{
 					return v[1];
 				}
@@ -802,11 +802,11 @@ namespace CoreNs
 				const Value a = stuckInput(0);
 				const Value b = stuckInput(1);
 				const Value s = stuckInput(2);
-				if (s == L)
+				if (atpgGoodIsLow(s))
 				{
 					return a;
 				}
-				if (s == H)
+				if (atpgGoodIsHigh(s))
 				{
 					return b;
 				}
@@ -846,7 +846,7 @@ namespace CoreNs
 			for (int i = 0; i < pCircuit_->numPI_; ++i)
 			{
 				pattern.PIFrames_[frame][i] =
-					pCircuit_->circuitGates_[i + frame * pCircuit_->numGate_].atpgVal_;
+					atpgToPatternValue(pCircuit_->circuitGates_[i + frame * pCircuit_->numGate_].atpgVal_);
 			}
 		}
 		for (int i = 0; i < pCircuit_->numPI_; ++i)
@@ -868,7 +868,7 @@ namespace CoreNs
 			}
 			else
 			{
-				pattern.PPI_[i] = pCircuit_->circuitGates_[pCircuit_->numPI_ + i].atpgVal_;
+				pattern.PPI_[i] = atpgToPatternValue(pCircuit_->circuitGates_[pCircuit_->numPI_ + i].atpgVal_);
 			}
 		}
 		// Per-frame scan-FF PPI. In PARTIAL_SEQUENTIAL the scan PPIs are free at every
@@ -887,14 +887,16 @@ namespace CoreNs
 				else
 				{
 					pattern.PPIFrames_[frame][i] =
-						pCircuit_->circuitGates_[pCircuit_->numPI_ + i + frame * pCircuit_->numGate_].atpgVal_;
+						atpgToPatternValue(pCircuit_->circuitGates_[pCircuit_->numPI_ + i + frame * pCircuit_->numGate_].atpgVal_);
 				}
 			}
 		}
 		// if (pattern.SI_ != NULL && pCircuit_->numFrame_ > 1)
 		if (!(pattern.SI_.empty()) && pCircuit_->numFrame_ > 1)
 		{
-			pattern.SI_[0] = (pCircuit_->timeFrameConnectType_ == Circuit::SHIFT) ? pCircuit_->circuitGates_[pCircuit_->numGate_ + pCircuit_->numPI_].atpgVal_ : X;
+			pattern.SI_[0] = (pCircuit_->timeFrameConnectType_ == Circuit::SHIFT)
+				? atpgToPatternValue(pCircuit_->circuitGates_[pCircuit_->numGate_ + pCircuit_->numPI_].atpgVal_)
+				: X;
 		}
 	}
 
@@ -1053,29 +1055,36 @@ namespace CoreNs
 		list.pop_back();
 	}
 
-	// 5-value logic evaluation functions
+	// Nine-valued logic evaluation functions (Muth, IEEE TC 1976)
 	inline Value Atpg::cINV(const Value &i1)
 	{
-		constexpr Value map[5] = {H, L, X, B, D};
-		if (i1 >= Z)
+		constexpr Value map[9] = {H, G1, D, F1, X, FO, B, G0, L};
+		const int idx = nineValIndex(i1);
+		if (idx < 0)
 		{
 			return Z;
 		}
-		return map[i1];
+		return map[idx];
 	}
 	inline Value Atpg::cAND2(const Value &i1, const Value &i2)
 	{
-		constexpr Value map[5][5] = {
-				{L, L, L, L, L},
-				{L, H, X, D, B},
-				{L, X, X, X, X},
-				{L, D, X, D, L},
-				{L, B, X, L, B}};
-		if (i1 >= Z || i2 >= Z)
+		constexpr Value map[9][9] = {
+				{L, G0, L, FO, X, FO, L, G0, L},
+				{G0, G0, G0, X, X, X, G0, G0, G0},
+				{L, B, B, FO, F1, F1, L, B, B},
+				{FO, X, FO, FO, X, FO, FO, X, FO},
+				{X, X, X, X, X, X, X, X, X},
+				{FO, F1, F1, FO, F1, F1, FO, F1, F1},
+				{L, G0, L, D, G1, D, D, G1, D},
+				{G0, G0, G0, G1, G1, G1, G1, G1, G1},
+				{L, B, B, D, H, H, D, H, H}};
+		const int a = nineValIndex(i1);
+		const int b = nineValIndex(i2);
+		if (a < 0 || b < 0)
 		{
 			return Z;
 		}
-		return map[i1][i2];
+		return map[a][b];
 	}
 	inline Value Atpg::cAND3(const Value &i1, const Value &i2, const Value &i3)
 	{
@@ -1099,17 +1108,23 @@ namespace CoreNs
 	}
 	inline Value Atpg::cOR2(const Value &i1, const Value &i2)
 	{
-		constexpr Value map[5][5] = {
-				{L, H, X, D, B},
-				{H, H, H, H, H},
-				{X, H, X, X, X},
-				{D, H, X, D, H},
-				{B, H, X, H, B}};
-		if (i1 >= Z || i2 >= Z)
+		constexpr Value map[9][9] = {
+				{L, G0, B, FO, X, F1, D, G1, H},
+				{G0, G0, B, X, X, F1, G1, G1, H},
+				{B, B, B, F1, F1, F1, H, H, H},
+				{FO, X, F1, FO, X, F1, D, G1, H},
+				{X, X, F1, X, X, F1, G1, G1, H},
+				{F1, F1, F1, F1, F1, F1, H, H, H},
+				{D, G1, H, D, G1, H, D, G1, H},
+				{G1, G1, H, G1, G1, H, G1, G1, H},
+				{H, H, H, H, H, H, H, H, H}};
+		const int a = nineValIndex(i1);
+		const int b = nineValIndex(i2);
+		if (a < 0 || b < 0)
 		{
 			return Z;
 		}
-		return map[i1][i2];
+		return map[a][b];
 	}
 	inline Value Atpg::cOR3(const Value &i1, const Value &i2, const Value &i3)
 	{
@@ -1133,17 +1148,23 @@ namespace CoreNs
 	}
 	inline Value Atpg::cXOR2(const Value &i1, const Value &i2)
 	{
-		constexpr Value map[5][5] = {
-				{L, H, X, D, B},
-				{H, L, X, B, D},
-				{X, X, X, X, X},
-				{D, B, X, L, H},
-				{B, D, X, H, L}};
-		if (i1 >= Z || i2 >= Z)
+		constexpr Value map[9][9] = {
+				{L, G0, B, FO, X, F1, D, G1, H},
+				{G0, G0, G0, X, X, X, G1, G1, G1},
+				{B, G0, L, F1, X, FO, H, G1, D},
+				{FO, X, F1, FO, X, F1, FO, X, F1},
+				{X, X, X, X, X, X, X, X, X},
+				{F1, X, FO, F1, X, FO, F1, X, FO},
+				{D, G1, H, FO, X, F1, L, G0, B},
+				{G1, G1, G1, X, X, X, G0, G0, G0},
+				{H, G1, D, F1, X, FO, B, G0, L}};
+		const int a = nineValIndex(i1);
+		const int b = nineValIndex(i2);
+		if (a < 0 || b < 0)
 		{
 			return Z;
 		}
-		return map[i1][i2];
+		return map[a][b];
 	}
 	inline Value Atpg::cXOR3(const Value &i1, const Value &i2, const Value &i3)
 	{
