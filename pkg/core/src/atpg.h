@@ -83,6 +83,7 @@ namespace CoreNs
 		inline int numThreads() const { return numThreads_; }
 		bool useTwoPhaseJustification_ = true;                        // sequential partial-scan state justify (T>=2)
 		bool useNineValuedLogic_ = false;                             // opt-in Muth 1976 nine-valued ATPG logic
+		bool useDeferredObservation_ = false;                         // target fault in frame 0 with reconnected BUFs
 
 	private:
 		int numThreads_ = 0;                                         // 0 = auto (all cores) at run_atpg

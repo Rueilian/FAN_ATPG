@@ -26,9 +26,9 @@ inline bool isStuckAtFault(const Fault &fault)
 	return fault.faultType_ == Fault::SA0 || fault.faultType_ == Fault::SA1;
 }
 
-inline Fault mapSafToObservationFrame(const Circuit *pCircuit, const Fault &fault)
+inline Fault mapSafToObservationFrame(const Circuit *pCircuit, const Fault &fault, bool skipOffset = false)
 {
-	if (!isStuckAtFault(fault) || pCircuit->numFrame_ <= 1)
+	if (!isStuckAtFault(fault) || pCircuit->numFrame_ <= 1 || skipOffset)
 	{
 		return fault;
 	}
@@ -716,7 +716,7 @@ int Atpg::fanInConeSize(const Fault *fault) const
 	{
 		return INFINITE;
 	}
-	const Fault mapped = mapSafToObservationFrame(pCircuit_, *fault);
+	const Fault mapped = mapSafToObservationFrame(pCircuit_, *fault, useDeferredObservation_);
 	int startGate = mapped.gateID_;
 	const Gate &faultyGate = pCircuit_->circuitGates_[mapped.gateID_];
 	if (mapped.faultyLine_ > 0 && mapped.faultyLine_ <= faultyGate.numFI_)
@@ -873,6 +873,37 @@ void Atpg::runResidualAtpgPhase(PatternProcessor *pPatternProcessor, FaultListEx
 		perTargetTimeoutSec_ = 0.0;
 		sortFaultListFanInConeDescending(abResidual);
 		runSaAtpgMainLoop(abResidual, pPatternProcessor);
+	}
+
+	// Phase C: deferred observation — reconnect non-scan FF BUFs, target faults in frame 0.
+	// Faults whose D-frontier exits through non-scan FF PPO (dead-end in last frame) can
+	// propagate: PPO(frame 0) → BUF → PPI(frame 1) → combinational logic → scan FF PPO → observable.
+	if (useTwoPhaseJustification_ && pCircuit_->numFrame_ >= 2 && !nonscanDisconnectInfo_.empty())
+	{
+		FaultPtrList deferredResidual;
+		for (Fault *pFault : pFaultListExtractor->faultsInCircuit_)
+		{
+			if (pFault->faultState_ == Fault::AU && pFault->faultyLine_ >= 0)
+			{
+				pFault->faultState_ = Fault::UD;
+				deferredResidual.push_back(pFault);
+			}
+		}
+		if (!deferredResidual.empty())
+		{
+			reconnectNonscanPPIs();
+			setupCircuitParameter();
+
+			const bool savedTwoPhase = useTwoPhaseJustification_;
+			useTwoPhaseJustification_ = false;
+			useDeferredObservation_ = true;
+			backtrackLimit_ = BACKTRACK_LIMIT;
+			perTargetTimeoutSec_ = 0.0;
+			sortFaultListFanInConeDescending(deferredResidual);
+			runSaAtpgMainLoop(deferredResidual, pPatternProcessor);
+			useDeferredObservation_ = false;
+			useTwoPhaseJustification_ = savedTwoPhase;
+		}
 	}
 
 	backtrackLimit_ = savedLimit;
@@ -1054,7 +1085,7 @@ void Atpg::generatePatternSetParallel(PatternProcessor *pPatternProcessor, Fault
 
 void Atpg::StuckAtFaultATPG(FaultPtrList &faultPtrListForGen, PatternProcessor *pPatternProcessor, int &numOfAtpgUntestableFaults, bool deferFaultDrop)
 {
-	const Fault mappedTargetFault = mapSafToObservationFrame(pCircuit_, *faultPtrListForGen.front());
+	const Fault mappedTargetFault = mapSafToObservationFrame(pCircuit_, *faultPtrListForGen.front(), useDeferredObservation_);
 	SINGLE_PATTERN_GENERATION_STATUS result = generateSinglePatternOnTargetFault(mappedTargetFault, false);
 	if (result == PATTERN_FOUND)
 	{
@@ -1109,7 +1140,7 @@ void Atpg::StuckAtFaultATPG(FaultPtrList &faultPtrListForGen, PatternProcessor *
 				if (xPathExists(pGateForActivation))
 				{
 					// TO-DO homework 05 implement DTC here end of TO-DO
-					if (generateSinglePatternOnTargetFault(mapSafToObservationFrame(pCircuit_, *pFault), true) == PATTERN_FOUND)
+					if (generateSinglePatternOnTargetFault(mapSafToObservationFrame(pCircuit_, *pFault, useDeferredObservation_), true) == PATTERN_FOUND)
 					{
 						resetPrevAtpgValStored();
 						clearAllFaultEffectByEvaluation();
@@ -1185,7 +1216,7 @@ void Atpg::StuckAtFaultATPG(FaultPtrList &faultPtrListForGen, PatternProcessor *
 // **************************************************************************
 Gate *Atpg::getGateForFaultActivation(const Fault &faultToActivate)
 {
-	const Fault mappedFault = mapSafToObservationFrame(pCircuit_, faultToActivate);
+	const Fault mappedFault = mapSafToObservationFrame(pCircuit_, faultToActivate, useDeferredObservation_);
 	bool isOutputFault = (faultToActivate.faultyLine_ == 0);
 	Gate *pGateForActivation = NULL;
 	Gate *pFaultyGate = &pCircuit_->circuitGates_[mappedFault.gateID_];
@@ -6077,7 +6108,7 @@ void Atpg::testClearFaultEffect(FaultPtrList &faultListToTest)
 {
 	for (Fault *pFault : faultListToTest)
 	{
-		generateSinglePatternOnTargetFault(mapSafToObservationFrame(pCircuit_, *pFault), false);
+		generateSinglePatternOnTargetFault(mapSafToObservationFrame(pCircuit_, *pFault, useDeferredObservation_), false);
 		clearAllFaultEffectByEvaluation();
 
 		for (int i = 0; i < pCircuit_->totalGate_; ++i)
