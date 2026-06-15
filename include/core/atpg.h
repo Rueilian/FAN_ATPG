@@ -96,6 +96,7 @@ namespace CoreNs
 		std::vector<int> headLineGateIDs_;												// all the head line gateID in the circuit
 		std::vector<int> gateID_to_n0_;														// gateID's n0_ value for multiple backtracing
 		std::vector<int> gateID_to_n1_;														// gateID's n1_ value for multiple backtracing
+		std::vector<Value> gateID_to_requiredVal_;								// nine-valued requirement accumulated at fanout points
 		std::vector<int> gateID_to_valModified_;									// indicate whether the gate has been backtraced or implied, true means the gate has been modified
 		std::vector<int> gateID_to_reachableByTargetFault_;				// 1 means this fanout is in fanout cone of target fault, 0 otherwise
 		std::vector<GATE_LINE_TYPE> gateID_to_lineType_;					// array of line types for all gates, i.e. FREE, HEAD, BOUND
@@ -134,6 +135,8 @@ namespace CoreNs
 		void generatePatternSetParallel(PatternProcessor *pPatternProcessor, FaultListExtract *pFaultListExtractor);
 		void globalFaultDropAfterPattern(PatternProcessor *pPatternProcessor, FaultPtrList &remainingFaults);
 		bool multipleBacktracePropagateFanin(Gate *pFaninGate, int nn0, int nn1, int &possibleFinalObjectiveID);
+		bool mergeBacktraceRequirement(const int gateID, const Value branchReq);
+		void resetBacktraceRequirement(const int gateID);
 
 		Gate *getGateForFaultActivation(const Fault &fault);
 		void setGateAtpgValAndRunImplication(Gate &gate, const Value &val);
@@ -195,6 +198,7 @@ namespace CoreNs
 		inline Value evaluateFaultyVal(Gate &gate);
 
 		inline void setGaten0n1(const int &gateID, const int &n0, const int &n1);
+		inline Value backtraceCountsToValue(int n0, int n1) const;
 
 		inline void writeAtpgValToPatternPI(Pattern &pattern);		// write PI values to pattern
 		inline void writeGoodSimValToPatternPO(Pattern &pattern); // write PO values to pattern
@@ -250,6 +254,7 @@ namespace CoreNs
 				pSimulator_(pSimulator),
 				gateID_to_n0_(pCircuit->totalGate_, 0),
 				gateID_to_n1_(pCircuit->totalGate_, 0),
+				gateID_to_requiredVal_(pCircuit->totalGate_, X),
 				gateID_to_valModified_(pCircuit->totalGate_, 0),
 				gateID_to_reachableByTargetFault_(pCircuit->totalGate_),
 				gateID_to_lineType_(pCircuit->totalGate_, FREE_LINE),
@@ -827,6 +832,19 @@ namespace CoreNs
 		gateID_to_n1_[gateID] = n1;
 	}
 
+	inline Value Atpg::backtraceCountsToValue(int n0, int n1) const
+	{
+		if (n0 > n1)
+		{
+			return L;
+		}
+		if (n1 > n0)
+		{
+			return H;
+		}
+		return X;
+	}
+
 	// **************************************************************************
 	// Function   [ Atpg::writeAtpgValToPatternPI ]
 	// Commenter  [ CAL WWS ]
@@ -1110,13 +1128,13 @@ namespace CoreNs
 	{
 		constexpr Value map[9][9] = {
 				{L, G0, B, FO, X, F1, D, G1, H},
-				{G0, G0, B, X, X, F1, G1, G1, H},
+				{G0, G0, G0, X, X, X, G1, G1, G1},
 				{B, B, B, F1, F1, F1, H, H, H},
-				{FO, X, F1, FO, X, F1, D, G1, H},
-				{X, X, F1, X, X, F1, G1, G1, H},
-				{F1, F1, F1, F1, F1, F1, H, H, H},
+				{FO, X, F1, FO, X, F1, FO, X, F1},
+				{X, X, X, X, X, X, X, X, X},
+				{F1, F1, F1, F1, F1, F1, F1, F1, F1},
 				{D, G1, H, D, G1, H, D, G1, H},
-				{G1, G1, H, G1, G1, H, G1, G1, H},
+				{G1, G1, G1, G1, G1, G1, G1, G1, G1},
 				{H, H, H, H, H, H, H, H, H}};
 		const int a = nineValIndex(i1);
 		const int b = nineValIndex(i2);
