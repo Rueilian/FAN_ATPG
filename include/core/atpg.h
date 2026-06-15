@@ -89,6 +89,10 @@ namespace CoreNs
 		bool useEnhancedBacktrace_ = false;                           // composite heuristic (SCOAP + depth + fanout)
 		bool useBackjump_ = false;                                    // non-chronological backtracking
 		bool useDominatorCheck_ = false;                              // early dominator conflict detection
+		bool useStaticLearning_ = false;                              // SOCRATES-style static implication learning
+
+		void precomputeImplications();                                 // precompute static implications (call after build)
+		bool checkStaticConflict(int gateId, Value val) const;        // check learned implications for conflict
 
 	private:
 		int numThreads_ = 0;                                         // 0 = auto (all cores) at run_atpg
@@ -110,6 +114,7 @@ namespace CoreNs
 		std::vector<int> gateToDecisionLevel_;                    // decision level per gate (backjump)
 		int conflictDecisionLevel_ = -1;                          // highest conflict level (backjump)
 		int currentDecisionLevel_ = 0;                            // current decision depth
+		std::vector<std::vector<std::pair<int, Value>>> learnedFrom_[2]; // static implications: learnedFrom_[val][g] = list of (targetId, impliedVal)
 		std::vector<XPATH_STATE> gateID_to_xPathStatus_;					// gateID to its xPathStatus, i.e. XPATH_EXIST, NO_XPATH_EXIST, UNKNOWN
 		std::vector<std::vector<int>> gateID_to_uniquePath_;			// list of gates on the unique path associated with a D-frontier, when there is only one gate in D-frontier, xPathTracing will update this information.
 		std::vector<std::stack<int>> circuitLevel_to_EventStack_; // every circuit level has its own corresponding event stack
@@ -278,6 +283,8 @@ namespace CoreNs
 		circuitLevel_to_EventStack_(0),
 		gateToDecisionLevel_(pCircuit->totalGate_, 0)
 	{
+		learnedFrom_[0].resize(pCircuit->totalGate_);
+		learnedFrom_[1].resize(pCircuit->totalGate_);
 		int maxGateLevel = 0;
 		for (int g = 0; g < pCircuit_->circuitGates_.size(); ++g)
 		{

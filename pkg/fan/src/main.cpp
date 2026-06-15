@@ -347,6 +347,20 @@ void initCmd(CmdMgr &cmdMgr, FanMgr &fanMgr)
 	};
 	Cmd *setDominatorCheckCmd = new SetDominatorCheckCmd("set_dominator_check", &fanMgr);
 
+	class SetStaticLearningCmd : public CommonNs::Cmd {
+	public:
+		SetStaticLearningCmd(const std::string &name, FanMgr *fm) : Cmd(name) { fm_ = fm; }
+		bool exec(const std::vector<std::string> &argv) override {
+			if (argv.size() < 2) { std::cerr << "**ERROR usage: set_static_learning <on/off>\n"; return false; }
+			std::string val = argv[1];
+			fm_->useStaticLearning_ = (val == "on" || val == "1" || val == "true");
+			std::cout << "#  static learning " << (fm_->useStaticLearning_ ? "enabled" : "disabled") << "\n";
+			return true;
+		}
+	private: FanMgr *fm_;
+	};
+	Cmd *setStaticLearningCmd = new SetStaticLearningCmd("set_static_learning", &fanMgr);
+
 	cmdMgr.regCmd("SETUP", readLibCmd);
 	cmdMgr.regCmd("SETUP", readNlCmd);
 	cmdMgr.regCmd("SETUP", setFaultTypeCmd);
@@ -367,6 +381,7 @@ void initCmd(CmdMgr &cmdMgr, FanMgr &fanMgr)
 	cmdMgr.regCmd("SETUP", setEnhancedBacktraceCmd);
 	cmdMgr.regCmd("SETUP", setBackjumpCmd);
 	cmdMgr.regCmd("SETUP", setDominatorCheckCmd);
+	cmdMgr.regCmd("SETUP", setStaticLearningCmd);
 
 	// ATPG commands
 	Cmd *readPatCmd = new ReadPatCmd("read_pattern", &fanMgr);

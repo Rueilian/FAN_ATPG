@@ -38,8 +38,9 @@ public:
         useNineValuedLogic_ = false;
         useEnhancedBacktrace_ = false;
         useBackjump_ = false;
-        useDominatorCheck_ = false;
-        atpgStat.rTime = 0;
+		useDominatorCheck_ = false;
+		useStaticLearning_ = false;
+		atpgStat.rTime = 0;
     }
     ~FanMgr() {}
 
@@ -58,8 +59,9 @@ public:
     bool                 useNineValuedLogic_;
     bool                 useEnhancedBacktrace_;
     bool                 useBackjump_;
-    bool                 useDominatorCheck_;
-    CommonNs::TmUsage   tmusg;
+		bool useDominatorCheck_;
+		bool useStaticLearning_;
+		CommonNs::TmUsage   tmusg;
     CommonNs::TmStat    atpgStat;
     // Cell names of FFs declared as non-scan (set by set_nonscan_ff before build_circuit).
     std::vector<std::string> nonscanFfNames;
