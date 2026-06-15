@@ -103,7 +103,7 @@ void Atpg::generatePatternSet(PatternProcessor *pPatternProcessor, FaultListExtr
 	pPatternProcessor->patternVector_.clear();
 	pPatternProcessor->patternVector_.reserve(MAX_LIST_SIZE);
 
-	backtrackLimit_ = (pCircuit_->numFrame_ == 1) ? getFastBacktrackLimit() : BACKTRACK_LIMIT;
+	backtrackLimit_ = (pCircuit_->numFrame_ == 1) ? getT1BacktrackLimit() : BACKTRACK_LIMIT;
 	runSaAtpgMainLoop(originalFaultPtrList, pPatternProcessor);
 
 	runResidualAtpgPhase(pPatternProcessor, pFaultListExtractor);
@@ -886,7 +886,7 @@ void parallelAtpgWorker(ParallelAtpgShared *shared, FaultPtrList bucket, Circuit
 	Simulator localSim(&local);
 	Atpg localAtpg(&local, &localSim);
 	localAtpg.setPerTargetTimeoutSec(shared->perTargetTimeout);
-	localAtpg.backtrackLimit_ = (localAtpg.pCircuit_->numFrame_ == 1) ? getFastBacktrackLimit() : BACKTRACK_LIMIT;
+	localAtpg.backtrackLimit_ = (localAtpg.pCircuit_->numFrame_ == 1) ? getT1BacktrackLimit() : BACKTRACK_LIMIT;
 	localAtpg.useTwoPhaseJustification_ = shared->masterAtpg->useTwoPhaseJustification_;
 	localAtpg.useNineValuedLogic_ = shared->masterAtpg->useNineValuedLogic_;
 

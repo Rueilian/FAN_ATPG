@@ -23,8 +23,8 @@ namespace CoreNs
 	void parallelAtpgWorker(ParallelAtpgShared *shared, FaultPtrList bucket, Circuit circuitTemplate);
 
 	constexpr int BACKTRACK_LIMIT = 5000;
-	inline int getFastBacktrackLimit() {
-    const char* env = std::getenv("ATPG_FAST_BACKTRACK_LIMIT");
+	inline int getT1BacktrackLimit() {
+    const char* env = std::getenv("ATPG_T1_BACKTRACK_LIMIT");
     return env ? std::atoi(env) : 800;
 }
 	constexpr int INFINITE = 0x7fffffff;
