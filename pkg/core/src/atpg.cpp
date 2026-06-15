@@ -643,8 +643,22 @@ void Atpg::setNumThreads(int n)
 
 bool Atpg::mergeBacktraceRequirement(const int gateID, const Value branchReq)
 {
-	(void)gateID;
-	(void)branchReq;
+	if (!useNineValuedLogic_ || branchReq == X || !isNineValuedLogic(branchReq))
+	{
+		return true;
+	}
+	Value &cur = gateID_to_requiredVal_[gateID];
+	if (cur == X)
+	{
+		cur = branchReq;
+		return true;
+	}
+	const Value merged = atpgIntersect(cur, branchReq);
+	if (merged == I)
+	{
+		return false;
+	}
+	cur = merged;
 	return true;
 }
 
@@ -878,6 +892,7 @@ void parallelAtpgWorker(ParallelAtpgShared *shared, FaultPtrList bucket, Circuit
 	localAtpg.backtrackLimit_ = shared->masterAtpg->twoPhaseAtpg_ ? FAST_BACKTRACK_LIMIT : BACKTRACK_LIMIT;
 	localAtpg.twoPhaseAtpg_ = false;
 	localAtpg.useTwoPhaseJustification_ = shared->masterAtpg->useTwoPhaseJustification_;
+	localAtpg.useNineValuedLogic_ = shared->masterAtpg->useNineValuedLogic_;
 
 	PatternProcessor localPP;
 	localPP.init(&local);
@@ -1302,7 +1317,7 @@ void Atpg::clearAllFaultEffectByEvaluation()
 // **************************************************************************
 void Atpg::clearFaultEffectOnGateAtpgVal(Gate &gate)
 {
-	if (hasFaultEffect(gate.atpgVal_))
+	if (hasAtpgFaultEffect(gate.atpgVal_))
 	{
 		gate.atpgVal_ = atpgToPatternValue(gate.atpgVal_);
 	}
@@ -2409,7 +2424,7 @@ Atpg::IMPLICATION_STATUS Atpg::doOneGateBackwardImplication(Gate *pGate)
 				implicationStatus = FORWARD;
 			}
 		}
-		else if (hasFaultEffect(pGate->atpgVal_))
+		else if (hasAtpgFaultEffect(pGate->atpgVal_))
 		{
 			const Value goodOut = atpgGoodRepresentative(pGate->atpgVal_);
 			if (pS->atpgVal_ == L && pA->atpgVal_ == X)
@@ -2871,7 +2886,7 @@ void Atpg::updateDFrontiers()
 	for (int i = 0; i < dFrontiers_.size();)
 	{
 		Gate &mGate = pCircuit_->circuitGates_[dFrontiers_[i]];
-		if (hasFaultEffect(mGate.atpgVal_))
+		if (hasAtpgFaultEffect(mGate.atpgVal_))
 		{
 			for (int j = 0; j < mGate.numFO_; ++j)
 			{
@@ -2918,7 +2933,7 @@ bool Atpg::checkIfFaultHasPropagatedToPO(bool &faultHasPropagatedToPO)
 		const Gate &gate = pCircuit_->circuitGates_[gateID];
 		if (gate.gateType_ == Gate::PO)
 		{
-			if (hasFaultEffect(gate.atpgVal_))
+			if (hasAtpgFaultEffect(gate.atpgVal_))
 			{
 				faultHasPropagatedToPO = true;
 				return true;
@@ -2930,7 +2945,7 @@ bool Atpg::checkIfFaultHasPropagatedToPO(bool &faultHasPropagatedToPO)
 			{
 				continue;
 			}
-			if (hasFaultEffect(gate.atpgVal_))
+			if (hasAtpgFaultEffect(gate.atpgVal_))
 			{
 				faultHasPropagatedToPO = true;
 				return true;
@@ -3207,9 +3222,9 @@ void Atpg::assignAtpgValToFinalObjectiveGates()
 
 		// judge the value by accumulated nine-valued requirement or n0/n1 counts
 		const Value required = gateID_to_requiredVal_[pGate->gateId_];
-		if (isNineValuedLogic(required) && !isFullyUnspecified(required))
+		if (useNineValuedLogic_ && isNineValuedLogic(required) && !isFullyUnspecified(required))
 		{
-			pGate->atpgVal_ = atpgToPatternValue(required);
+			pGate->atpgVal_ = patternFromAtpgVal(required);
 		}
 		else if (gateID_to_n0_[pGate->gateId_] > gateID_to_n1_[pGate->gateId_])
 		{
@@ -3275,8 +3290,8 @@ void Atpg::justifyFreeLines(Fault &originalFault)
 			restoreFault(originalFault);
 			continue;
 		}
-		// for other HEADLINE, collapse nine-valued fault effects to good-rail pattern values
-		if (hasFaultEffect(pGate->atpgVal_))
+		// for other HEADLINE, collapse fault effects to good-rail pattern values
+		if (hasAtpgFaultEffect(pGate->atpgVal_))
 		{
 			pGate->atpgVal_ = atpgToPatternValue(pGate->atpgVal_);
 		}
@@ -3323,7 +3338,7 @@ void Atpg::restoreFault(Fault &originalFault)
 	for (int i = 0; i < pFaultPropGate->numFI_; ++i)
 	{
 		Gate *pFaninGate = &pCircuit_->circuitGates_[pFaultPropGate->faninVector_[i]];
-		if (hasFaultEffect(pFaninGate->atpgVal_))
+		if (hasAtpgFaultEffect(pFaninGate->atpgVal_))
 		{
 			pFaninGate->atpgVal_ = atpgToPatternValue(pFaninGate->atpgVal_);
 		}
@@ -3364,7 +3379,7 @@ void Atpg::restoreFault(Fault &originalFault)
 	{
 		Gate *pGate = &pCircuit_->circuitGates_[vecPop(fanoutObjectives_)];
 		// if the gate's value is D set to H, D' set to L
-		if (hasFaultEffect(pGate->atpgVal_))
+		if (hasAtpgFaultEffect(pGate->atpgVal_))
 		{
 			pGate->atpgVal_ = atpgToPatternValue(pGate->atpgVal_);
 		}
@@ -4465,7 +4480,7 @@ Atpg::BACKTRACE_RESULT Atpg::multipleBacktrace(BACKTRACE_STATUS atpgStatus, int 
 				else
 				{ // NO
 					const Value stemReq = gateID_to_requiredVal_[pCurrentObj->gateId_];
-					if (isNineValuedLogic(stemReq) && !isFullyUnspecified(stemReq))
+					if (useNineValuedLogic_ && isNineValuedLogic(stemReq) && !isFullyUnspecified(stemReq))
 					{
 						finalObjectives_.push_back(pCurrentObj->gateId_);
 						atpgStatus = CHECK_AND_SELECT;
@@ -4489,11 +4504,11 @@ Atpg::BACKTRACE_RESULT Atpg::multipleBacktrace(BACKTRACE_STATUS atpgStatus, int 
 							int nn1;
 						};
 						std::vector<MuxFaninTask> tasks;
-						if (pS->atpgVal_ == L || atpgGoodIsLow(pS->atpgVal_))
+						if (useNineValuedLogic_ ? atpgGoodIsLow(pS->atpgVal_) : pS->atpgVal_ == L)
 						{
 							tasks.push_back({pA, n0, n1});
 						}
-						else if (pS->atpgVal_ == H || atpgGoodIsHigh(pS->atpgVal_))
+						else if (useNineValuedLogic_ ? atpgGoodIsHigh(pS->atpgVal_) : pS->atpgVal_ == H)
 						{
 							tasks.push_back({pB, n0, n1});
 						}
@@ -4695,7 +4710,7 @@ Atpg::BACKTRACE_RESULT Atpg::multipleBacktrace(BACKTRACE_STATUS atpgStatus, int 
 
 				// Nine-valued intersection may resolve apparently conflicting n0/n1 tallies.
 				const Value required = gateID_to_requiredVal_[pCurrentObj->gateId_];
-				if (isNineValuedLogic(required) && !isFullyUnspecified(required))
+				if (useNineValuedLogic_ && isNineValuedLogic(required) && !isFullyUnspecified(required))
 				{
 					atpgStatus = CURRENT_OBJ_DETERMINE;
 					break; // switch break
@@ -4892,11 +4907,15 @@ void Atpg::initializeForMultipleBacktrace()
 		Gate *pGate = &pCircuit_->circuitGates_[currentObjectGateID];
 
 		// if single value of the gate is Low or partly-specified low rail
-		if (atpgGoodIsLow(pGate->atpgVal_) || pGate->atpgVal_ == B || pGate->atpgVal_ == FO)
+		if (useNineValuedLogic_
+				? (atpgGoodIsLow(pGate->atpgVal_) || pGate->atpgVal_ == B || pGate->atpgVal_ == FO)
+				: pGate->atpgVal_ == L)
 		{
 			setGaten0n1(pGate->gateId_, 1, 0);
 		}
-		else if (atpgGoodIsHigh(pGate->atpgVal_) || pGate->atpgVal_ == D || pGate->atpgVal_ == F1)
+		else if (useNineValuedLogic_
+				? (atpgGoodIsHigh(pGate->atpgVal_) || pGate->atpgVal_ == D || pGate->atpgVal_ == F1)
+				: pGate->atpgVal_ == H)
 		{ // if single value of the gate is High or partly-specified high rail
 			setGaten0n1(pGate->gateId_, 0, 1);
 		}

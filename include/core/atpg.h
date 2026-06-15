@@ -82,6 +82,7 @@ namespace CoreNs
 		void setNumThreads(int n);
 		inline int numThreads() const { return numThreads_; }
 		bool useTwoPhaseJustification_ = true;                        // sequential partial-scan state justify (T>=2)
+		bool useNineValuedLogic_ = false;                             // opt-in Muth 1976 nine-valued ATPG logic
 
 	private:
 		int numThreads_ = 0;                                         // 0 = auto (all cores) at run_atpg
@@ -199,6 +200,8 @@ namespace CoreNs
 
 		inline void setGaten0n1(const int &gateID, const int &n0, const int &n1);
 		inline Value backtraceCountsToValue(int n0, int n1) const;
+		inline bool hasAtpgFaultEffect(const Value &value) const;
+		inline Value patternFromAtpgVal(const Value &value) const;
 
 		inline void writeAtpgValToPatternPI(Pattern &pattern);		// write PI values to pattern
 		inline void writeGoodSimValToPatternPO(Pattern &pattern); // write PO values to pattern
@@ -213,7 +216,7 @@ namespace CoreNs
 		inline int vecPop(std::vector<int> &vec);
 		inline void vecDelete(std::vector<int> &list, const int &index);
 
-		// Nine-valued logic evaluation functions (Muth 1976)
+		// ATPG logic evaluation functions: five-valued by default, nine-valued when enabled.
 		inline Value cINV(const Value &i1);
 		inline Value cAND2(const Value &i1, const Value &i2);
 		inline Value cAND3(const Value &i1, const Value &i2, const Value &i3);
@@ -363,11 +366,11 @@ namespace CoreNs
 			case Gate::XNOR3:
 				return cXNOR3(v[0], v[1], v[2]);
 			case Gate::MUX:
-				if (atpgGoodIsLow(v[2]))
+				if (useNineValuedLogic_ ? atpgGoodIsLow(v[2]) : v[2] == L)
 				{
 					return v[0];
 				}
-				if (atpgGoodIsHigh(v[2]))
+				if (useNineValuedLogic_ ? atpgGoodIsHigh(v[2]) : v[2] == H)
 				{
 					return v[1];
 				}
@@ -807,11 +810,11 @@ namespace CoreNs
 				const Value a = stuckInput(0);
 				const Value b = stuckInput(1);
 				const Value s = stuckInput(2);
-				if (atpgGoodIsLow(s))
+				if (useNineValuedLogic_ ? atpgGoodIsLow(s) : s == L)
 				{
 					return a;
 				}
-				if (atpgGoodIsHigh(s))
+				if (useNineValuedLogic_ ? atpgGoodIsHigh(s) : s == H)
 				{
 					return b;
 				}
@@ -845,6 +848,16 @@ namespace CoreNs
 		return X;
 	}
 
+	inline bool Atpg::hasAtpgFaultEffect(const Value &value) const
+	{
+		return useNineValuedLogic_ ? hasFaultEffect(value) : (value == D || value == B);
+	}
+
+	inline Value Atpg::patternFromAtpgVal(const Value &value) const
+	{
+		return useNineValuedLogic_ ? atpgToPatternValue(value) : value;
+	}
+
 	// **************************************************************************
 	// Function   [ Atpg::writeAtpgValToPatternPI ]
 	// Commenter  [ CAL WWS ]
@@ -864,7 +877,7 @@ namespace CoreNs
 			for (int i = 0; i < pCircuit_->numPI_; ++i)
 			{
 				pattern.PIFrames_[frame][i] =
-					atpgToPatternValue(pCircuit_->circuitGates_[i + frame * pCircuit_->numGate_].atpgVal_);
+					patternFromAtpgVal(pCircuit_->circuitGates_[i + frame * pCircuit_->numGate_].atpgVal_);
 			}
 		}
 		for (int i = 0; i < pCircuit_->numPI_; ++i)
@@ -886,7 +899,7 @@ namespace CoreNs
 			}
 			else
 			{
-				pattern.PPI_[i] = atpgToPatternValue(pCircuit_->circuitGates_[pCircuit_->numPI_ + i].atpgVal_);
+				pattern.PPI_[i] = patternFromAtpgVal(pCircuit_->circuitGates_[pCircuit_->numPI_ + i].atpgVal_);
 			}
 		}
 		// Per-frame scan-FF PPI. In PARTIAL_SEQUENTIAL the scan PPIs are free at every
@@ -905,7 +918,7 @@ namespace CoreNs
 				else
 				{
 					pattern.PPIFrames_[frame][i] =
-						atpgToPatternValue(pCircuit_->circuitGates_[pCircuit_->numPI_ + i + frame * pCircuit_->numGate_].atpgVal_);
+						patternFromAtpgVal(pCircuit_->circuitGates_[pCircuit_->numPI_ + i + frame * pCircuit_->numGate_].atpgVal_);
 				}
 			}
 		}
@@ -913,7 +926,7 @@ namespace CoreNs
 		if (!(pattern.SI_.empty()) && pCircuit_->numFrame_ > 1)
 		{
 			pattern.SI_[0] = (pCircuit_->timeFrameConnectType_ == Circuit::SHIFT)
-				? atpgToPatternValue(pCircuit_->circuitGates_[pCircuit_->numGate_ + pCircuit_->numPI_].atpgVal_)
+				? patternFromAtpgVal(pCircuit_->circuitGates_[pCircuit_->numGate_ + pCircuit_->numPI_].atpgVal_)
 				: X;
 		}
 	}
@@ -1073,9 +1086,19 @@ namespace CoreNs
 		list.pop_back();
 	}
 
-	// Nine-valued logic evaluation functions (Muth, IEEE TC 1976)
+	// ATPG logic evaluation functions
 	inline Value Atpg::cINV(const Value &i1)
 	{
+		if (!useNineValuedLogic_)
+		{
+			constexpr Value map[5] = {H, L, X, B, D};
+			if (i1 >= Z)
+			{
+				return Z;
+			}
+			return map[i1];
+		}
+
 		constexpr Value map[9] = {H, G1, D, F1, X, FO, B, G0, L};
 		const int idx = nineValIndex(i1);
 		if (idx < 0)
@@ -1086,6 +1109,21 @@ namespace CoreNs
 	}
 	inline Value Atpg::cAND2(const Value &i1, const Value &i2)
 	{
+		if (!useNineValuedLogic_)
+		{
+			constexpr Value map[5][5] = {
+					{L, L, L, L, L},
+					{L, H, X, D, B},
+					{L, X, X, X, X},
+					{L, D, X, D, L},
+					{L, B, X, L, B}};
+			if (i1 >= Z || i2 >= Z)
+			{
+				return Z;
+			}
+			return map[i1][i2];
+		}
+
 		constexpr Value map[9][9] = {
 				{L, G0, L, FO, X, FO, L, G0, L},
 				{G0, G0, G0, X, X, X, G0, G0, G0},
@@ -1126,6 +1164,21 @@ namespace CoreNs
 	}
 	inline Value Atpg::cOR2(const Value &i1, const Value &i2)
 	{
+		if (!useNineValuedLogic_)
+		{
+			constexpr Value map[5][5] = {
+					{L, H, X, D, B},
+					{H, H, H, H, H},
+					{X, H, X, X, X},
+					{D, H, X, D, H},
+					{B, H, X, H, B}};
+			if (i1 >= Z || i2 >= Z)
+			{
+				return Z;
+			}
+			return map[i1][i2];
+		}
+
 		constexpr Value map[9][9] = {
 				{L, G0, B, FO, X, F1, D, G1, H},
 				{G0, G0, G0, X, X, X, G1, G1, G1},
@@ -1166,6 +1219,21 @@ namespace CoreNs
 	}
 	inline Value Atpg::cXOR2(const Value &i1, const Value &i2)
 	{
+		if (!useNineValuedLogic_)
+		{
+			constexpr Value map[5][5] = {
+					{L, H, X, D, B},
+					{H, L, X, B, D},
+					{X, X, X, X, X},
+					{D, B, X, L, H},
+					{B, D, X, H, L}};
+			if (i1 >= Z || i2 >= Z)
+			{
+				return Z;
+			}
+			return map[i1][i2];
+		}
+
 		constexpr Value map[9][9] = {
 				{L, G0, B, FO, X, F1, D, G1, H},
 				{G0, G0, G0, X, X, X, G1, G1, G1},

@@ -249,6 +249,31 @@ void initCmd(CmdMgr &cmdMgr, FanMgr &fanMgr)
 	};
 	Cmd *setTwoPhaseJustificationCmd = new SetTwoPhaseJustificationCmd("set_two_phase_justification", &fanMgr);
 
+	class SetNineValuedLogicCmd : public CommonNs::Cmd {
+	public:
+		SetNineValuedLogicCmd(const std::string &name, FanMgr *fm) : Cmd(name) { fm_ = fm; }
+		bool exec(const std::vector<std::string> &argv) override {
+			if (argv.size() < 2) { std::cerr << "**ERROR usage: set_nine_valued_logic <on/off>\n"; return false; }
+			std::string val = argv[1];
+			if (val == "on" || val == "1" || val == "true") {
+				fm_->useNineValuedLogic_ = true;
+				if (fm_->atpg) {
+					fm_->atpg->useNineValuedLogic_ = true;
+				}
+				std::cout << "#  nine-valued ATPG logic enabled\n";
+			} else {
+				fm_->useNineValuedLogic_ = false;
+				if (fm_->atpg) {
+					fm_->atpg->useNineValuedLogic_ = false;
+				}
+				std::cout << "#  five-valued ATPG logic enabled\n";
+			}
+			return true;
+		}
+	private: FanMgr *fm_;
+	};
+	Cmd *setNineValuedLogicCmd = new SetNineValuedLogicCmd("set_nine_valued_logic", &fanMgr);
+
 	class SetAtpgThreadsCmd : public CommonNs::Cmd {
 	public:
 		SetAtpgThreadsCmd(const std::string &name, FanMgr *fm) : Cmd(name) { fm_ = fm; }
@@ -294,6 +319,7 @@ void initCmd(CmdMgr &cmdMgr, FanMgr &fanMgr)
 	cmdMgr.regCmd("SETUP", setNonscanFfCmd);
 	cmdMgr.regCmd("SETUP", setPerTargetTimeoutCmd);
 	cmdMgr.regCmd("SETUP", setTwoPhaseJustificationCmd);
+	cmdMgr.regCmd("SETUP", setNineValuedLogicCmd);
 	cmdMgr.regCmd("SETUP", setAtpgThreadsCmd);
 
 	// ATPG commands

@@ -1475,6 +1475,7 @@ bool RunAtpgCmd::exec(const std::vector<std::string> &argv)
 		fanMgr_->atpg->setPerTargetTimeoutSec(fanMgr_->perTargetTimeout_);
 	fanMgr_->atpg->setNumThreads(fanMgr_->atpgThreads_);
 	fanMgr_->atpg->useTwoPhaseJustification_ = fanMgr_->useTwoPhaseJustification_;
+	fanMgr_->atpg->useNineValuedLogic_ = fanMgr_->useNineValuedLogic_;
 
 	std::cout << "#  Performing pattern generation ...";
 	std::cout << " (" << fanMgr_->atpg->numThreads() << " workers)";
@@ -1619,12 +1620,12 @@ bool AddScanChainsCmd::exec(const std::vector<std::string> &argv)
 	if (optMgr_.isFlagSet("o"))
 		outFile = optMgr_.getFlagVar("o");
 
-	std::cout << "#  Add Scan Chains — exporting data to: " << outFile << "\n";
+	std::cout << "#  Add Scan Chains ??? exporting data to: " << outFile << "\n";
 	std::cout << "#    Number of flip-flops: " << numPPI << "\n";
 
 	if (numPPI == 0)
 	{
-		std::cout << "#    No flip-flops found — combinational-only circuit\n";
+		std::cout << "#    No flip-flops found ??? combinational-only circuit\n";
 		return true;
 	}
 
@@ -1659,7 +1660,7 @@ bool AddScanChainsCmd::exec(const std::vector<std::string> &argv)
 	for (const auto &n : ffNames)
 		sf << " " << n;
 	sf << "\n";
-	// SCOAP: one line per FF — CC0 CC1 CO (higher = harder to test = more scan-worthy)
+	// SCOAP: one line per FF ??? CC0 CC1 CO (higher = harder to test = more scan-worthy)
 	sf << "SCOAP";
 	for (int i = 0; i < numPPI; ++i)
 		sf << "  " << ffCC0[i] << " " << ffCC1[i] << " " << ffCO[i];

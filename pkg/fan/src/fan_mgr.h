@@ -35,6 +35,7 @@ public:
         scanProtocolEnabled_ = true;
         scanProtocolApplied_ = false;
         useTwoPhaseJustification_ = true;
+        useNineValuedLogic_ = false;
         atpgStat.rTime = 0;
     }
     ~FanMgr() {}
@@ -51,6 +52,7 @@ public:
     bool                 scanProtocolEnabled_;  // auto TI async reset/control PIs (default on)
     bool                 scanProtocolApplied_;
     bool                 useTwoPhaseJustification_;
+    bool                 useNineValuedLogic_;
     CommonNs::TmUsage   tmusg;
     CommonNs::TmStat    atpgStat;
     // Cell names of FFs declared as non-scan (set by set_nonscan_ff before build_circuit).
