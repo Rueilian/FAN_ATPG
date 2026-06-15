@@ -1,0 +1,21 @@
+read_lib techlib/mod_nangate45.mdt
+read_netlist mod_netlist/b05.v
+set_nonscan_ff _1786_
+_1787_
+_1788_
+_1789_
+_1790_
+_1791_
+_1792_
+_1793_
+_1794_
+build_circuit --frame 1
+set_fault_type saf
+add_fault --all
+set_two_phase_justification on
+set_static_compression off
+set_dynamic_compression off
+run_atpg
+report_statistics > /mnt/c/Users/Rueilian/OneDrive/Desktop/NTU/積體電路測試/final/ScanForge/FAN_ATPG/rpt/exp_b05_x10_no_ptt_T1_t1.rpt
+report_fault > /mnt/c/Users/Rueilian/OneDrive/Desktop/NTU/積體電路測試/final/ScanForge/FAN_ATPG/rpt/exp_b05_x10_no_ptt_T1_t1_faults.txt
+exit

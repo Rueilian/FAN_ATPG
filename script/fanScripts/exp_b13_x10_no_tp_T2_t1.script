@@ -1,0 +1,22 @@
+read_lib techlib/mod_nangate45.mdt
+read_netlist mod_netlist/b13.v
+set_nonscan_ff _676_
+_677_
+_678_
+_679_
+_680_
+_681_
+_682_
+_683_
+_684_
+build_circuit --frame 1
+set_fault_type saf
+add_fault --all
+set_per_target_timeout 5
+set_two_phase_justification on
+set_static_compression off
+set_dynamic_compression off
+run_atpg
+report_statistics > /mnt/c/Users/Rueilian/OneDrive/Desktop/NTU/積體電路測試/final/ScanForge/FAN_ATPG/rpt/exp_b13_x10_no_tp_T2_t1.rpt
+report_fault > /mnt/c/Users/Rueilian/OneDrive/Desktop/NTU/積體電路測試/final/ScanForge/FAN_ATPG/rpt/exp_b13_x10_no_tp_T2_t1_faults.txt
+exit

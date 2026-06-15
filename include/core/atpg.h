@@ -88,7 +88,7 @@ namespace CoreNs
 		int numThreads_ = 0;                                         // 0 = auto (all cores) at run_atpg
 		double perTargetTimeoutSec_ = 0.0;                           // per-target-fault wall-clock timeout in seconds; 0=disabled
 		int backtrackLimit_ = BACKTRACK_LIMIT;                       // phase-dependent backtrack cap
-		bool twoPhaseAtpg_ = true;                                   // fast pass then AU residual retry
+
 		Circuit *pCircuit_;																				// the circuit built on read verilog
 		Simulator *pSimulator_;																		// the simulator based on the built circuit
 		Fault currentTargetFault_;																// current target fault for generateSinglePatternOnTargetFault

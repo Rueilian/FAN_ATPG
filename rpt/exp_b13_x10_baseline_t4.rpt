@@ -1,0 +1,35 @@
+#                 Statistics Report
+#  Circuit name                                  b13
+#  Fault model                                   SAF
+#  Pattern type                                BASIC
+#  -------------------------------------------------
+#  Fault classes                             #faults
+#  ----------------------------  -------------------
+#    FU (full)                                   113
+#    FU (collapsed)                               81
+#    --------------------------  -------------------
+#    UD (undetected)                               0
+#    PT (possibly testable)                        0
+#    AU (atpg untestable)                        111
+#    RE (redundant)                                0
+#    AB (atpg abort)                               0
+#    TO (timeout)                                  0
+#    TI (tied)                                     2
+#    TI (scan async control)                       2
+#    --------------------------  -------------------
+#    DT (detected)                                 0
+#  -------------------------------------------------
+#  Coverage                               percentage
+#    --------------------------  -------------------
+#    fault coverage (scan protocol)               0%
+#    fault coverage (scan, collapsed)             0%
+#    test coverage (scan protocol)                0%
+#    --------------------------  -------------------
+#    fault coverage (raw, appendix)               0%
+#    test coverage (raw, appendix)             -nan%
+#    atpg effectiveness (appendix)                100%
+#  -------------------------------------------------
+#  #Patterns                                       0
+#  -------------------------------------------------
+#  ATPG runtime                           0.002627 s
+#  -------------------------------------------------

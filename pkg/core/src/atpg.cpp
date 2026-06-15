@@ -103,13 +103,10 @@ void Atpg::generatePatternSet(PatternProcessor *pPatternProcessor, FaultListExtr
 	pPatternProcessor->patternVector_.clear();
 	pPatternProcessor->patternVector_.reserve(MAX_LIST_SIZE);
 
-	backtrackLimit_ = twoPhaseAtpg_ ? FAST_BACKTRACK_LIMIT : BACKTRACK_LIMIT;
+	backtrackLimit_ = (pCircuit_->numFrame_ == 1) ? FAST_BACKTRACK_LIMIT : BACKTRACK_LIMIT;
 	runSaAtpgMainLoop(originalFaultPtrList, pPatternProcessor);
 
-	if (twoPhaseAtpg_)
-	{
-		runResidualAtpgPhase(pPatternProcessor, pFaultListExtractor);
-	}
+	runResidualAtpgPhase(pPatternProcessor, pFaultListExtractor);
 
 	int numOfAtpgUntestableFaults = 0;
 	if (pPatternProcessor->staticCompression_ == PatternProcessor::ON)
@@ -889,8 +886,7 @@ void parallelAtpgWorker(ParallelAtpgShared *shared, FaultPtrList bucket, Circuit
 	Simulator localSim(&local);
 	Atpg localAtpg(&local, &localSim);
 	localAtpg.setPerTargetTimeoutSec(shared->perTargetTimeout);
-	localAtpg.backtrackLimit_ = shared->masterAtpg->twoPhaseAtpg_ ? FAST_BACKTRACK_LIMIT : BACKTRACK_LIMIT;
-	localAtpg.twoPhaseAtpg_ = false;
+	localAtpg.backtrackLimit_ = (localAtpg.pCircuit_->numFrame_ == 1) ? FAST_BACKTRACK_LIMIT : BACKTRACK_LIMIT;
 	localAtpg.useTwoPhaseJustification_ = shared->masterAtpg->useTwoPhaseJustification_;
 	localAtpg.useNineValuedLogic_ = shared->masterAtpg->useNineValuedLogic_;
 
@@ -1009,10 +1005,7 @@ void Atpg::generatePatternSetParallel(PatternProcessor *pPatternProcessor, Fault
 		t.join();
 	}
 
-	if (twoPhaseAtpg_)
-	{
-		runResidualAtpgPhase(pPatternProcessor, pFaultListExtractor);
-	}
+	runResidualAtpgPhase(pPatternProcessor, pFaultListExtractor);
 
 	if (pPatternProcessor->staticCompression_ == PatternProcessor::ON)
 	{
