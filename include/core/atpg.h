@@ -86,6 +86,9 @@ namespace CoreNs
 		inline int numThreads() const { return numThreads_; }
 		bool useTwoPhaseJustification_ = true;                        // sequential partial-scan state justify (T>=2)
 		bool useNineValuedLogic_ = false;                             // opt-in Muth 1976 nine-valued ATPG logic
+		bool useEnhancedBacktrace_ = false;                           // composite heuristic (SCOAP + depth + fanout)
+		bool useBackjump_ = false;                                    // non-chronological backtracking
+		bool useDominatorCheck_ = false;                              // early dominator conflict detection
 
 	private:
 		int numThreads_ = 0;                                         // 0 = auto (all cores) at run_atpg
@@ -104,6 +107,9 @@ namespace CoreNs
 		std::vector<int> gateID_to_valModified_;									// indicate whether the gate has been backtraced or implied, true means the gate has been modified
 		std::vector<int> gateID_to_reachableByTargetFault_;				// 1 means this fanout is in fanout cone of target fault, 0 otherwise
 		std::vector<GATE_LINE_TYPE> gateID_to_lineType_;					// array of line types for all gates, i.e. FREE, HEAD, BOUND
+		std::vector<int> gateToDecisionLevel_;                    // decision level per gate (backjump)
+		int conflictDecisionLevel_ = -1;                          // highest conflict level (backjump)
+		int currentDecisionLevel_ = 0;                            // current decision depth
 		std::vector<XPATH_STATE> gateID_to_xPathStatus_;					// gateID to its xPathStatus, i.e. XPATH_EXIST, NO_XPATH_EXIST, UNKNOWN
 		std::vector<std::vector<int>> gateID_to_uniquePath_;			// list of gates on the unique path associated with a D-frontier, when there is only one gate in D-frontier, xPathTracing will update this information.
 		std::vector<std::stack<int>> circuitLevel_to_EventStack_; // every circuit level has its own corresponding event stack
@@ -176,6 +182,7 @@ namespace CoreNs
 		void restoreFault(Fault &originalFault);
 		int countEffectiveDFrontiers(Gate *pFaultyLineGate);
 		int doUniquePathSensitization(Gate &gate);
+		bool checkDominatorBlocked() const;
 
 		bool xPathExists(Gate *pGate);
 		bool xPathTracing(Gate *pGate);
@@ -188,6 +195,7 @@ namespace CoreNs
 		Value assignBacktraceValue(int &n0, int &n1, const Gate &gate);
 		void initializeForMultipleBacktrace();
 		Gate *findEasiestInput(Gate *pGate, Value atpgValOfpGate);
+		int calCompositeScore(const Gate *pGate, Value targetVal) const;
 		Gate *findClosestToPO(std::vector<int> &gateVec, int &index);
 
 		IMPLICATION_STATUS evaluateAndSetGateAtpgVal(Gate *pGate);
@@ -266,8 +274,9 @@ namespace CoreNs
 				gateID_to_reachableByTargetFault_(pCircuit->totalGate_),
 				gateID_to_lineType_(pCircuit->totalGate_, FREE_LINE),
 				gateID_to_xPathStatus_(pCircuit->totalGate_),
-				gateID_to_uniquePath_(pCircuit->totalGate_, std::vector<int>()),
-				circuitLevel_to_EventStack_(0)
+		gateID_to_uniquePath_(pCircuit->totalGate_, std::vector<int>()),
+		circuitLevel_to_EventStack_(0),
+		gateToDecisionLevel_(pCircuit->totalGate_, 0)
 	{
 		int maxGateLevel = 0;
 		for (int g = 0; g < pCircuit_->circuitGates_.size(); ++g)

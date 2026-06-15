@@ -36,6 +36,9 @@ public:
         scanProtocolApplied_ = false;
         useTwoPhaseJustification_ = true;
         useNineValuedLogic_ = false;
+        useEnhancedBacktrace_ = false;
+        useBackjump_ = false;
+        useDominatorCheck_ = false;
         atpgStat.rTime = 0;
     }
     ~FanMgr() {}
@@ -53,6 +56,9 @@ public:
     bool                 scanProtocolApplied_;
     bool                 useTwoPhaseJustification_;
     bool                 useNineValuedLogic_;
+    bool                 useEnhancedBacktrace_;
+    bool                 useBackjump_;
+    bool                 useDominatorCheck_;
     CommonNs::TmUsage   tmusg;
     CommonNs::TmStat    atpgStat;
     // Cell names of FFs declared as non-scan (set by set_nonscan_ff before build_circuit).

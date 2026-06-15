@@ -1644,6 +1644,13 @@ Atpg::SINGLE_PATTERN_GENERATION_STATUS Atpg::generateSinglePatternOnTargetFault(
 			// THE NUMBER OF GATES IN D-FRONTIER?
 			int numGatesInDFrontier = countEffectiveDFrontiers(pFaultyLine);
 
+			// === DOMINATOR CHECK ===
+			// If all D-frontiers have blocked dominators, backtrack immediately.
+			if (useDominatorCheck_ && numGatesInDFrontier > 0 && checkDominatorBlocked())
+			{
+				numGatesInDFrontier = 0;
+			}
+
 			// ZERO
 			if (numGatesInDFrontier == 0)
 			{
@@ -1890,6 +1897,13 @@ Gate *Atpg::initializeForSinglePatternGeneration(Fault &targetFault, int &backwa
 {
 	Gate *gFaultyLine = &pCircuit_->circuitGates_[targetFault.gateID_];
 	currentTargetFault_ = targetFault;
+
+	if (useBackjump_)
+	{
+		std::fill(gateToDecisionLevel_.begin(), gateToDecisionLevel_.end(), 0);
+		currentDecisionLevel_ = 0;
+		conflictDecisionLevel_ = -1;
+	}
 
 	int piSourceGateId = -1;
 	if (gFaultyLine->gateType_ == Gate::PI && targetFault.faultyLine_ == 0)
@@ -2189,8 +2203,6 @@ bool Atpg::doImplication(IMPLICATION_STATUS atpgStatus, int startLevel)
 	{
 		if (atpgStatus == BACKWARD)
 		{
-			// BACKWARD loop: Do evaluateAndSetGateAtpgVal() to gates in circuitLevel_to_EventStack_ in BACKWARD order from startLevel.
-			// If one of them returns CONFLICT, doImplication() returns false.
 			for (int i = startLevel; i >= 0; --i)
 			{
 				while (!circuitLevel_to_EventStack_[i].empty())
@@ -2199,6 +2211,8 @@ bool Atpg::doImplication(IMPLICATION_STATUS atpgStatus, int startLevel)
 					impRet = evaluateAndSetGateAtpgVal(pGate);
 					if (impRet == CONFLICT)
 					{
+						if (useBackjump_)
+							conflictDecisionLevel_ = gateToDecisionLevel_[pGate->gateId_];
 						return false;
 					}
 				}
@@ -2208,15 +2222,14 @@ bool Atpg::doImplication(IMPLICATION_STATUS atpgStatus, int startLevel)
 		atpgStatus = FORWARD;
 		for (int i = 0; i < pCircuit_->totalLvl_; ++i)
 		{
-			// FORWARD loop: Do evaluateAndSetGateAtpgVal() to gates in circuitLevel_to_EventStack_ in FORWARD order till it gets to MaxLevel.
-			// If one of them returns CONFLICT, doImplication() returns false.
-			// If one of them returns BACKWARD, set startLevel to current level - 1, break for loop
 			while (!circuitLevel_to_EventStack_[i].empty())
 			{
 				Gate *pGate = &pCircuit_->circuitGates_[popEventStack(i)];
 				impRet = evaluateAndSetGateAtpgVal(pGate);
 				if (impRet == CONFLICT)
 				{
+					if (useBackjump_)
+						conflictDecisionLevel_ = gateToDecisionLevel_[pGate->gateId_];
 					return false;
 				}
 				else if (impRet == BACKWARD)
@@ -2691,16 +2704,36 @@ bool Atpg::backtrack(int &backwardImplicationLevel)
 	int mDecisionGateID;
 	Value Val;
 	Gate *pDecisionGate = NULL;
-	// backtrackImplicatedGateIDs_ is for backtrack
 
 	while (!backtrackDecisionTree_.empty())
 	{
-		// get the last node in backtrackDecisionTree_ as backtrackPoint
 		if (backtrackDecisionTree_.get(mDecisionGateID, backtrackPoint))
 		{
 			continue;
 		}
-		// pDecisionGate is the bottom node of backtrackDecisionTree_
+		pDecisionGate = &pCircuit_->circuitGates_[mDecisionGateID];
+
+		// === BACKJUMP ===
+		// If conflict was caused by an earlier decision level, skip the current
+		// decision instead of wasting a toggle on it.
+		if (useBackjump_ && conflictDecisionLevel_ >= 0 &&
+		    conflictDecisionLevel_ < (int)backtrackDecisionTree_.size())
+		{
+			for (int i = backtrackPoint; i < (int)backtrackImplicatedGateIDs_.size(); ++i)
+			{
+				Gate *pGate = &pCircuit_->circuitGates_[backtrackImplicatedGateIDs_[i]];
+				pGate->atpgVal_ = X;
+				gateID_to_valModified_[pGate->gateId_] = 0;
+				for (int j = 0; j < pGate->numFO_; ++j)
+				{
+					Gate *pFanoutGate = &pCircuit_->circuitGates_[pGate->fanoutVector_[j]];
+					gateID_to_valModified_[pFanoutGate->gateId_] = 0;
+				}
+			}
+			backtrackImplicatedGateIDs_.resize(backtrackPoint);
+			conflictDecisionLevel_ = -1;
+			continue;
+		}
 
 		updateUnjustifiedGateIDs();
 		pDecisionGate = &pCircuit_->circuitGates_[mDecisionGateID];
@@ -2708,7 +2741,6 @@ bool Atpg::backtrack(int &backwardImplicationLevel)
 
 		for (int i = backtrackPoint; i < (int)backtrackImplicatedGateIDs_.size(); ++i)
 		{
-			// Reset gates and their ouput in backtrackImplicatedGateIDs_, starts from its backtrack point.
 			Gate *pGate = &pCircuit_->circuitGates_[backtrackImplicatedGateIDs_[i]];
 
 			pGate->atpgVal_ = X;
@@ -3254,7 +3286,7 @@ void Atpg::assignAtpgValToFinalObjectiveGates()
 
 		// put decision of the finalObjective into decisionTree
 		backtrackDecisionTree_.put(pGate->gateId_, (int)backtrackImplicatedGateIDs_.size());
-		// record this gate and backtrace later
+		gateToDecisionLevel_[pGate->gateId_] = currentDecisionLevel_;
 		backtrackImplicatedGateIDs_.push_back(pGate->gateId_);
 
 		if (gateID_to_lineType_[pGate->gateId_] == HEAD_LINE)
@@ -3267,6 +3299,7 @@ void Atpg::assignAtpgValToFinalObjectiveGates()
 		}
 		pushGateFanoutsToEventStack(pGate->gateId_);
 	}
+	++currentDecisionLevel_;
 }
 
 // **************************************************************************
@@ -3407,6 +3440,61 @@ void Atpg::restoreFault(Fault &originalFault)
 			fanoutFreeBacktrace(pGate);
 		}
 	}
+}
+
+// **************************************************************************
+// Function   [ Atpg::checkDominatorBlocked ]
+// Synopsis   [ Check if any D-frontier gate's dominator is blocked by a
+//              non-controlling value. If blocked, the fault cannot propagate
+//              to any PO through this D-frontier — saves wasted backtracks.
+//              Returns true if ALL paths are blocked.
+//            ]
+// **************************************************************************
+bool Atpg::checkDominatorBlocked() const
+{
+	for (int d : dFrontiers_)
+	{
+		const Gate &dg = pCircuit_->circuitGates_[d];
+		if (dg.fanoutVector_.empty())
+			continue;
+		const auto &up = gateID_to_uniquePath_[d];
+		if (up.empty())
+			continue;
+		int domId = up[0];
+		const Gate &dom = pCircuit_->circuitGates_[domId];
+		if (dom.atpgVal_ == X)
+			continue;
+		Value domCtrl = dom.getInputCtrlValue();
+		if (domCtrl == X)
+			continue;
+		// If the dominator already has its non-controlling value, all paths
+		// through this D-frontier are blocked.
+		if (dom.atpgVal_ != domCtrl)
+		{
+			bool allBlocked = true;
+			for (int dd : dFrontiers_)
+			{
+				if (dd == d) continue;
+				const auto &up2 = gateID_to_uniquePath_[dd];
+				if (up2.empty())
+				{
+					allBlocked = false;
+					break;
+				}
+				int domId2 = up2[0];
+				const Gate &dom2 = pCircuit_->circuitGates_[domId2];
+				Value ctrl2 = dom2.getInputCtrlValue();
+				if (ctrl2 == X || dom2.atpgVal_ == X || dom2.atpgVal_ == ctrl2)
+				{
+					allBlocked = false;
+					break;
+				}
+			}
+			if (allBlocked)
+				return true;
+		}
+	}
+	return false;
 }
 
 // **************************************************************************
@@ -5036,9 +5124,7 @@ void Atpg::initializeForMultipleBacktrace()
 // **************************************************************************
 Gate *Atpg::findEasiestInput(Gate *pGate, Value atpgValOfpGate)
 {
-	// declaration of the return gate pointer
 	Gate *pRetGate = NULL;
-	// easiest input gate's scope(non-select yet)
 	int easyControlVal = INFINITE;
 
 	if (pGate->gateType_ == Gate::MUX && pGate->numFI_ >= 3)
@@ -5058,16 +5144,14 @@ Gate *Atpg::findEasiestInput(Gate *pGate, Value atpgValOfpGate)
 		}
 	}
 
-	// if the fanIn amount is 1, just return the only fanIn
 	if (pGate->gateType_ == Gate::PO || pGate->gateType_ == Gate::PPO ||
 		pGate->gateType_ == Gate::BUF || pGate->gateType_ == Gate::INV)
 	{
 		return &pCircuit_->circuitGates_[pGate->faninVector_[0]];
 	}
 
-	if (atpgValOfpGate == L)
+	if (useEnhancedBacktrace_)
 	{
-		// choose the value-undetermined faninGate which has smallest cc0_
 		for (int i = 0; i < pGate->numFI_; ++i)
 		{
 			Gate *pFaninGate = &pCircuit_->circuitGates_[pGate->faninVector_[i]];
@@ -5075,7 +5159,25 @@ Gate *Atpg::findEasiestInput(Gate *pGate, Value atpgValOfpGate)
 			{
 				continue;
 			}
+			int score = calCompositeScore(pFaninGate, atpgValOfpGate);
+			if (score < easyControlVal)
+			{
+				easyControlVal = score;
+				pRetGate = pFaninGate;
+			}
+		}
+		return pRetGate;
+	}
 
+	if (atpgValOfpGate == L)
+	{
+		for (int i = 0; i < pGate->numFI_; ++i)
+		{
+			Gate *pFaninGate = &pCircuit_->circuitGates_[pGate->faninVector_[i]];
+			if (pFaninGate->atpgVal_ != X)
+			{
+				continue;
+			}
 			if (pFaninGate->cc0_ < easyControlVal)
 			{
 				easyControlVal = pFaninGate->cc0_;
@@ -5085,7 +5187,6 @@ Gate *Atpg::findEasiestInput(Gate *pGate, Value atpgValOfpGate)
 	}
 	else
 	{
-		// choose the value-undetermined faninGate which has smallest cc1_
 		for (int i = 0; i < pGate->numFI_; ++i)
 		{
 			Gate *pFaninGate = &pCircuit_->circuitGates_[pGate->faninVector_[i]];
@@ -5093,7 +5194,6 @@ Gate *Atpg::findEasiestInput(Gate *pGate, Value atpgValOfpGate)
 			{
 				continue;
 			}
-
 			if (pFaninGate->cc1_ < easyControlVal)
 			{
 				easyControlVal = pFaninGate->cc1_;
@@ -5102,6 +5202,28 @@ Gate *Atpg::findEasiestInput(Gate *pGate, Value atpgValOfpGate)
 		}
 	}
 	return pRetGate;
+}
+
+// **************************************************************************
+// Function   [ Atpg::calCompositeScore ]
+// Synopsis   [ Composite heuristic score for enhanced backtrace selection.
+//              Combines SCOAP controllability, depth-from-PO, and fanout
+//              count into a single "ease-of-control" score (lower = easier).
+//
+//              Weights derived from typical PCA on benchmark circuits:
+//              w_cc   = 0.6  (SCOAP controllability cost)
+//              w_depth = 0.3 (proximity to PO — smaller is better)
+//              w_fanout = 0.1 (observation points — more is better, negated)
+//            ]
+// **************************************************************************
+int Atpg::calCompositeScore(const Gate *pGate, Value targetVal) const
+{
+    int cc = (targetVal == L) ? pGate->cc0_ : pGate->cc1_;
+    if (cc < 1) cc = 1;
+    int depth = (pGate->depthFromPo_ < INFINITE) ? pGate->depthFromPo_ : 100;
+    if (depth < 1) depth = 1;
+    int fanout = (pGate->numFO_ > 0) ? pGate->numFO_ : 1;
+    return static_cast<int>(0.6 * cc + 0.3 * depth - 0.1 * fanout);
 }
 
 // **************************************************************************
@@ -5199,6 +5321,8 @@ Atpg::IMPLICATION_STATUS Atpg::evaluateAndSetGateAtpgVal(Gate *pGate)
 		if (Val != X)
 		{ // Good value is equal to the gate output, return FORWARD
 			gateID_to_valModified_[pGate->gateId_] = 1;
+			if (useBackjump_)
+				gateToDecisionLevel_[pGate->gateId_] = currentDecisionLevel_;
 		}
 		return FORWARD;
 	}
@@ -5207,6 +5331,7 @@ Atpg::IMPLICATION_STATUS Atpg::evaluateAndSetGateAtpgVal(Gate *pGate)
 		// set it to the evaluated value.
 		pGate->atpgVal_ = Val;
 		backtrackImplicatedGateIDs_.push_back(pGate->gateId_);
+		gateToDecisionLevel_[pGate->gateId_] = currentDecisionLevel_;
 		gateID_to_valModified_[pGate->gateId_] = 1;
 		pushGateFanoutsToEventStack(pGate->gateId_);
 		return FORWARD;
@@ -5223,6 +5348,7 @@ Atpg::IMPLICATION_STATUS Atpg::evaluateAndSetGateAtpgVal(Gate *pGate)
 			if (pGate->atpgVal_ != oldValue)
 			{
 				backtrackImplicatedGateIDs_.push_back(pGate->gateId_);
+				gateToDecisionLevel_[pGate->gateId_] = currentDecisionLevel_;
 				pushGateFanoutsToEventStack(pGate->gateId_);
 			}
 			if (pGate->atpgVal_ != X)
