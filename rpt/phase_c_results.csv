@@ -1,8 +1,0 @@
-experiment,netlist,fc_pct,au,dt,collapsed,notes
-baseline,b03.v,34.75,948,538,1112,post Phase C1 PO/PPO fix
-reset_tie_high,b03_reset_tie.v,33.96,963,527,1112,reset deasserted via LOGIC1; no FC gain
-rn_per_ff_tie,b03_rn_tie.v,NA,NA,NA,NA,Netlist::check fail — dangling reset INV nets after RN retarget
-tiny_sdffr,tiny_sdffr.v,91.67,0,22,24,C1 gate: functional path DT restored
-tiny_sdff,tiny_sdff.v,91.67,0,22,24,C1 gate
-s510,s510.v,99.14,0,1330,1340,no regression
-s27,s27.v,94.55,0,NA,NA,regression
