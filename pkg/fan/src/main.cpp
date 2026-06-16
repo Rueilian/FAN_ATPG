@@ -304,6 +304,63 @@ void initCmd(CmdMgr &cmdMgr, FanMgr &fanMgr)
 	};
 	Cmd *setAtpgThreadsCmd = new SetAtpgThreadsCmd("set_atpg_threads", &fanMgr);
 
+	// --- ATPG optimization flags ---
+	class SetEnhancedBacktraceCmd : public CommonNs::Cmd {
+	public:
+		SetEnhancedBacktraceCmd(const std::string &name, FanMgr *fm) : Cmd(name) { fm_ = fm; }
+		bool exec(const std::vector<std::string> &argv) override {
+			if (argv.size() < 2) { std::cerr << "**ERROR usage: set_enhanced_backtrace <on/off>\n"; return false; }
+			std::string val = argv[1];
+			fm_->useEnhancedBacktrace_ = (val == "on" || val == "1" || val == "true");
+			std::cout << "#  enhanced backtrace " << (fm_->useEnhancedBacktrace_ ? "enabled" : "disabled") << "\n";
+			return true;
+		}
+	private: FanMgr *fm_;
+	};
+	Cmd *setEnhancedBacktraceCmd = new SetEnhancedBacktraceCmd("set_enhanced_backtrace", &fanMgr);
+
+	class SetBackjumpCmd : public CommonNs::Cmd {
+	public:
+		SetBackjumpCmd(const std::string &name, FanMgr *fm) : Cmd(name) { fm_ = fm; }
+		bool exec(const std::vector<std::string> &argv) override {
+			if (argv.size() < 2) { std::cerr << "**ERROR usage: set_backjump <on/off>\n"; return false; }
+			std::string val = argv[1];
+			fm_->useBackjump_ = (val == "on" || val == "1" || val == "true");
+			std::cout << "#  non-chronological backtracking " << (fm_->useBackjump_ ? "enabled" : "disabled") << "\n";
+			return true;
+		}
+	private: FanMgr *fm_;
+	};
+	Cmd *setBackjumpCmd = new SetBackjumpCmd("set_backjump", &fanMgr);
+
+	class SetDominatorCheckCmd : public CommonNs::Cmd {
+	public:
+		SetDominatorCheckCmd(const std::string &name, FanMgr *fm) : Cmd(name) { fm_ = fm; }
+		bool exec(const std::vector<std::string> &argv) override {
+			if (argv.size() < 2) { std::cerr << "**ERROR usage: set_dominator_check <on/off>\n"; return false; }
+			std::string val = argv[1];
+			fm_->useDominatorCheck_ = (val == "on" || val == "1" || val == "true");
+			std::cout << "#  dominator check " << (fm_->useDominatorCheck_ ? "enabled" : "disabled") << "\n";
+			return true;
+		}
+	private: FanMgr *fm_;
+	};
+	Cmd *setDominatorCheckCmd = new SetDominatorCheckCmd("set_dominator_check", &fanMgr);
+
+	class SetStaticLearningCmd : public CommonNs::Cmd {
+	public:
+		SetStaticLearningCmd(const std::string &name, FanMgr *fm) : Cmd(name) { fm_ = fm; }
+		bool exec(const std::vector<std::string> &argv) override {
+			if (argv.size() < 2) { std::cerr << "**ERROR usage: set_static_learning <on/off>\n"; return false; }
+			std::string val = argv[1];
+			fm_->useStaticLearning_ = (val == "on" || val == "1" || val == "true");
+			std::cout << "#  static learning " << (fm_->useStaticLearning_ ? "enabled" : "disabled") << "\n";
+			return true;
+		}
+	private: FanMgr *fm_;
+	};
+	Cmd *setStaticLearningCmd = new SetStaticLearningCmd("set_static_learning", &fanMgr);
+
 	cmdMgr.regCmd("SETUP", readLibCmd);
 	cmdMgr.regCmd("SETUP", readNlCmd);
 	cmdMgr.regCmd("SETUP", setFaultTypeCmd);
@@ -321,6 +378,10 @@ void initCmd(CmdMgr &cmdMgr, FanMgr &fanMgr)
 	cmdMgr.regCmd("SETUP", setTwoPhaseJustificationCmd);
 	cmdMgr.regCmd("SETUP", setNineValuedLogicCmd);
 	cmdMgr.regCmd("SETUP", setAtpgThreadsCmd);
+	cmdMgr.regCmd("SETUP", setEnhancedBacktraceCmd);
+	cmdMgr.regCmd("SETUP", setBackjumpCmd);
+	cmdMgr.regCmd("SETUP", setDominatorCheckCmd);
+	cmdMgr.regCmd("SETUP", setStaticLearningCmd);
 
 	// ATPG commands
 	Cmd *readPatCmd = new ReadPatCmd("read_pattern", &fanMgr);

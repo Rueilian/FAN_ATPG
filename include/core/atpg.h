@@ -23,7 +23,10 @@ namespace CoreNs
 	void parallelAtpgWorker(ParallelAtpgShared *shared, FaultPtrList bucket, Circuit circuitTemplate);
 
 	constexpr int BACKTRACK_LIMIT = 5000;
-	constexpr int FAST_BACKTRACK_LIMIT = 800;
+	inline int getT1BacktrackLimit() {
+    const char* env = std::getenv("ATPG_T1_BACKTRACK_LIMIT");
+    return env ? std::atoi(env) : 800;
+}
 	constexpr int INFINITE = 0x7fffffff;
 	constexpr int MAX_LIST_SIZE = 1000;
 	constexpr int NO_UNIQUE_PATH = -1;
@@ -84,12 +87,19 @@ namespace CoreNs
 		bool useTwoPhaseJustification_ = true;                        // sequential partial-scan state justify (T>=2)
 		bool useNineValuedLogic_ = false;                             // opt-in Muth 1976 nine-valued ATPG logic
 		bool useDeferredObservation_ = false;                         // target fault in frame 0 with reconnected BUFs
+		bool useEnhancedBacktrace_ = false;                           // composite heuristic (SCOAP + depth + fanout)
+		bool useBackjump_ = false;                                    // non-chronological backtracking
+		bool useDominatorCheck_ = false;                              // early dominator conflict detection
+		bool useStaticLearning_ = false;                              // SOCRATES-style static implication learning
+
+		void precomputeImplications();                                 // precompute static implications (call after build)
+		bool checkStaticConflict(int gateId, Value val) const;        // check learned implications for conflict
 
 	private:
 		int numThreads_ = 0;                                         // 0 = auto (all cores) at run_atpg
 		double perTargetTimeoutSec_ = 0.0;                           // per-target-fault wall-clock timeout in seconds; 0=disabled
 		int backtrackLimit_ = BACKTRACK_LIMIT;                       // phase-dependent backtrack cap
-		bool twoPhaseAtpg_ = true;                                   // fast pass then AU residual retry
+
 		Circuit *pCircuit_;																				// the circuit built on read verilog
 		Simulator *pSimulator_;																		// the simulator based on the built circuit
 		Fault currentTargetFault_;																// current target fault for generateSinglePatternOnTargetFault
@@ -102,6 +112,10 @@ namespace CoreNs
 		std::vector<int> gateID_to_valModified_;									// indicate whether the gate has been backtraced or implied, true means the gate has been modified
 		std::vector<int> gateID_to_reachableByTargetFault_;				// 1 means this fanout is in fanout cone of target fault, 0 otherwise
 		std::vector<GATE_LINE_TYPE> gateID_to_lineType_;					// array of line types for all gates, i.e. FREE, HEAD, BOUND
+		std::vector<int> gateToDecisionLevel_;                    // decision level per gate (backjump)
+		int conflictDecisionLevel_ = -1;                          // highest conflict level (backjump)
+		int currentDecisionLevel_ = 0;                            // current decision depth
+		std::vector<std::vector<std::pair<int, Value>>> learnedFrom_[2]; // static implications: learnedFrom_[val][g] = list of (targetId, impliedVal)
 		std::vector<XPATH_STATE> gateID_to_xPathStatus_;					// gateID to its xPathStatus, i.e. XPATH_EXIST, NO_XPATH_EXIST, UNKNOWN
 		std::vector<std::vector<int>> gateID_to_uniquePath_;			// list of gates on the unique path associated with a D-frontier, when there is only one gate in D-frontier, xPathTracing will update this information.
 		std::vector<std::stack<int>> circuitLevel_to_EventStack_; // every circuit level has its own corresponding event stack
@@ -174,6 +188,7 @@ namespace CoreNs
 		void restoreFault(Fault &originalFault);
 		int countEffectiveDFrontiers(Gate *pFaultyLineGate);
 		int doUniquePathSensitization(Gate &gate);
+		bool checkDominatorBlocked() const;
 
 		bool xPathExists(Gate *pGate);
 		bool xPathTracing(Gate *pGate);
@@ -186,6 +201,7 @@ namespace CoreNs
 		Value assignBacktraceValue(int &n0, int &n1, const Gate &gate);
 		void initializeForMultipleBacktrace();
 		Gate *findEasiestInput(Gate *pGate, Value atpgValOfpGate);
+		int calCompositeScore(const Gate *pGate, Value targetVal) const;
 		Gate *findClosestToPO(std::vector<int> &gateVec, int &index);
 
 		IMPLICATION_STATUS evaluateAndSetGateAtpgVal(Gate *pGate);
@@ -264,9 +280,12 @@ namespace CoreNs
 				gateID_to_reachableByTargetFault_(pCircuit->totalGate_),
 				gateID_to_lineType_(pCircuit->totalGate_, FREE_LINE),
 				gateID_to_xPathStatus_(pCircuit->totalGate_),
-				gateID_to_uniquePath_(pCircuit->totalGate_, std::vector<int>()),
-				circuitLevel_to_EventStack_(0)
+		gateID_to_uniquePath_(pCircuit->totalGate_, std::vector<int>()),
+		circuitLevel_to_EventStack_(0),
+		gateToDecisionLevel_(pCircuit->totalGate_, 0)
 	{
+		learnedFrom_[0].resize(pCircuit->totalGate_);
+		learnedFrom_[1].resize(pCircuit->totalGate_);
 		int maxGateLevel = 0;
 		for (int g = 0; g < pCircuit_->circuitGates_.size(); ++g)
 		{

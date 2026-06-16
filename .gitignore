@@ -9,6 +9,8 @@ bin/opt/.nfs*
 *.exe
 pkg/core/bin/
 
+rpt/exp_*
+
 # Downloaded techlib (use mod_nangate45.mdt in repo)
 techlib/NangateOpenCellLibrary_typical.lib
 

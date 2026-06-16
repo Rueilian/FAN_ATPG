@@ -1,0 +1,17 @@
+circuit,condition,fc,patterns,runtime_sec,aborts
+b03,baseline,91.23,7,.042008013,0
+b03,enhanced_only,91.23,7,.049186565,0
+b04,baseline,94.18,19,.860028169,0
+b04,enhanced_only,94.18,19,2.157718255,0
+b05,baseline,96.1,35,.508865738,4
+b05,enhanced_only,96.21,35,.560357171,0
+b07,baseline,93.92,11,.030430672,0
+b07,enhanced_only,93.92,11,.030390195,0
+b08,baseline,95.47,22,.115178418,0
+b08,enhanced_only,95.47,25,.109400105,0
+b09,baseline,94.58,18,.031498401,0
+b09,enhanced_only,94.58,18,.054741528,0
+b11,baseline,98.05,49,.501753156,0
+b11,enhanced_only,TIMEOUT,TIMEOUT,300,TIMEOUT
+b13,baseline,92.39,8,.039711451,0
+b13,enhanced_only,92.39,8,.095744914,0

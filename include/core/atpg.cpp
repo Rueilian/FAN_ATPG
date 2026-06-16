@@ -26,9 +26,9 @@ inline bool isStuckAtFault(const Fault &fault)
 	return fault.faultType_ == Fault::SA0 || fault.faultType_ == Fault::SA1;
 }
 
-inline Fault mapSafToObservationFrame(const Circuit *pCircuit, const Fault &fault, bool skipOffset = false)
+inline Fault mapSafToObservationFrame(const Circuit *pCircuit, const Fault &fault)
 {
-	if (!isStuckAtFault(fault) || pCircuit->numFrame_ <= 1 || skipOffset)
+	if (!isStuckAtFault(fault) || pCircuit->numFrame_ <= 1)
 	{
 		return fault;
 	}
@@ -666,10 +666,7 @@ void Atpg::resetBacktraceRequirement(const int gateID)
 
 bool Atpg::multipleBacktracePropagateFanin(Gate *pFaninGate, int nn0, int nn1, int &possibleFinalObjectiveID)
 {
-	const bool faninNeedsBacktrace =
-		isDecisionNeeded(pFaninGate->atpgVal_) ||
-		(useNineValuedLogic_ && isPartlySpecifiedAtpgValue(pFaninGate->atpgVal_));
-	if ((nn0 <= 0 && nn1 <= 0) || !faninNeedsBacktrace)
+	if ((nn0 <= 0 && nn1 <= 0) || pFaninGate->atpgVal_ != X)
 	{
 		return true;
 	}
@@ -687,7 +684,7 @@ bool Atpg::multipleBacktracePropagateFanin(Gate *pFaninGate, int nn0, int nn1, i
 		}
 		if (!mergeBacktraceRequirement(pFaninGate->gateId_, branchReq))
 		{
-			possibleFinalObjectiveID = pFaninGate->gateId_;
+			possibleFinalObjectiveID = -1;
 			return false;
 		}
 		setGaten0n1(pFaninGate->gateId_, gateID_to_n0_[pFaninGate->gateId_] + nn0, gateID_to_n1_[pFaninGate->gateId_] + nn1);
@@ -697,7 +694,7 @@ bool Atpg::multipleBacktracePropagateFanin(Gate *pFaninGate, int nn0, int nn1, i
 	{
 		if (!mergeBacktraceRequirement(pFaninGate->gateId_, branchReq))
 		{
-			possibleFinalObjectiveID = pFaninGate->gateId_;
+			possibleFinalObjectiveID = -1;
 			return false;
 		}
 		setGaten0n1(pFaninGate->gateId_, nn0, nn1);
@@ -713,7 +710,7 @@ int Atpg::fanInConeSize(const Fault *fault) const
 	{
 		return INFINITE;
 	}
-	const Fault mapped = mapSafToObservationFrame(pCircuit_, *fault, useDeferredObservation_);
+	const Fault mapped = mapSafToObservationFrame(pCircuit_, *fault);
 	int startGate = mapped.gateID_;
 	const Gate &faultyGate = pCircuit_->circuitGates_[mapped.gateID_];
 	if (mapped.faultyLine_ > 0 && mapped.faultyLine_ <= faultyGate.numFI_)
@@ -833,76 +830,26 @@ void Atpg::runSaAtpgMainLoop(FaultPtrList &workList, PatternProcessor *pPatternP
 
 void Atpg::runResidualAtpgPhase(PatternProcessor *pPatternProcessor, FaultListExtract *pFaultListExtractor)
 {
-	const int savedLimit = backtrackLimit_;
-	const double savedPto = perTargetTimeoutSec_;
-
-	// Phase A: retry AU faults (structural candidates) — unlimited time, standard limit
-	FaultPtrList auResidual;
+	FaultPtrList residual;
 	for (Fault *pFault : pFaultListExtractor->faultsInCircuit_)
 	{
 		if (pFault->faultState_ == Fault::AU && pFault->faultyLine_ >= 0)
 		{
 			pFault->faultState_ = Fault::UD;
-			auResidual.push_back(pFault);
+			residual.push_back(pFault);
 		}
 	}
-	if (!auResidual.empty())
+	if (residual.empty())
 	{
-		backtrackLimit_ = BACKTRACK_LIMIT;
-		perTargetTimeoutSec_ = 0.0;
-		sortFaultListFanInConeDescending(auResidual);
-		runSaAtpgMainLoop(auResidual, pPatternProcessor);
+		return;
 	}
 
-	// Phase B: retry AB faults with 10x backtrack budget — catches search-budget-limited faults
-	FaultPtrList abResidual;
-	for (Fault *pFault : pFaultListExtractor->faultsInCircuit_)
-	{
-		if (pFault->faultState_ == Fault::AB && pFault->faultyLine_ >= 0)
-		{
-			pFault->faultState_ = Fault::UD;
-			abResidual.push_back(pFault);
-		}
-	}
-	if (!abResidual.empty())
-	{
-		backtrackLimit_ = BACKTRACK_LIMIT * 10;
-		perTargetTimeoutSec_ = 0.0;
-		sortFaultListFanInConeDescending(abResidual);
-		runSaAtpgMainLoop(abResidual, pPatternProcessor);
-	}
-
-	// Phase C: deferred observation — reconnect non-scan FF BUFs, target faults in frame 0.
-	// Faults whose D-frontier exits through non-scan FF PPO (dead-end in last frame) can
-	// propagate: PPO(frame 0) → BUF → PPI(frame 1) → combinational logic → scan FF PPO → observable.
-	if (useTwoPhaseJustification_ && pCircuit_->numFrame_ >= 2 && !nonscanDisconnectInfo_.empty())
-	{
-		FaultPtrList deferredResidual;
-		for (Fault *pFault : pFaultListExtractor->faultsInCircuit_)
-		{
-			if (pFault->faultState_ == Fault::AU && pFault->faultyLine_ >= 0)
-			{
-				pFault->faultState_ = Fault::UD;
-				deferredResidual.push_back(pFault);
-			}
-		}
-		if (!deferredResidual.empty())
-		{
-			reconnectNonscanPPIs();
-			setupCircuitParameter();
-
-			const bool savedTwoPhase = useTwoPhaseJustification_;
-			useTwoPhaseJustification_ = false;
-			useDeferredObservation_ = true;
-			backtrackLimit_ = BACKTRACK_LIMIT;
-			perTargetTimeoutSec_ = 0.0;
-			sortFaultListFanInConeDescending(deferredResidual);
-			runSaAtpgMainLoop(deferredResidual, pPatternProcessor);
-			useDeferredObservation_ = false;
-			useTwoPhaseJustification_ = savedTwoPhase;
-		}
-	}
-
+	const int savedLimit = backtrackLimit_;
+	const double savedPto = perTargetTimeoutSec_;
+	backtrackLimit_ = BACKTRACK_LIMIT;
+	perTargetTimeoutSec_ = 0.0;
+	sortFaultListFanInConeDescending(residual);
+	runSaAtpgMainLoop(residual, pPatternProcessor);
 	backtrackLimit_ = savedLimit;
 	perTargetTimeoutSec_ = savedPto;
 }
@@ -942,9 +889,6 @@ void parallelAtpgWorker(ParallelAtpgShared *shared, FaultPtrList bucket, Circuit
 	localAtpg.backtrackLimit_ = (localAtpg.pCircuit_->numFrame_ == 1) ? getT1BacktrackLimit() : BACKTRACK_LIMIT;
 	localAtpg.useTwoPhaseJustification_ = shared->masterAtpg->useTwoPhaseJustification_;
 	localAtpg.useNineValuedLogic_ = shared->masterAtpg->useNineValuedLogic_;
-	// Copy the non-scan PPI → BUF driver map so justifyStateSequentiallyUnrolled can
-	// find the correct gate IDs in each worker's local circuit copy.
-	localAtpg.nonscanDisconnectInfo_ = shared->masterAtpg->nonscanDisconnectInfo_;
 
 	PatternProcessor localPP;
 	localPP.init(&local);
@@ -1078,7 +1022,7 @@ void Atpg::generatePatternSetParallel(PatternProcessor *pPatternProcessor, Fault
 
 void Atpg::StuckAtFaultATPG(FaultPtrList &faultPtrListForGen, PatternProcessor *pPatternProcessor, int &numOfAtpgUntestableFaults, bool deferFaultDrop)
 {
-	const Fault mappedTargetFault = mapSafToObservationFrame(pCircuit_, *faultPtrListForGen.front(), useDeferredObservation_);
+	const Fault mappedTargetFault = mapSafToObservationFrame(pCircuit_, *faultPtrListForGen.front());
 	SINGLE_PATTERN_GENERATION_STATUS result = generateSinglePatternOnTargetFault(mappedTargetFault, false);
 	if (result == PATTERN_FOUND)
 	{
@@ -1133,7 +1077,7 @@ void Atpg::StuckAtFaultATPG(FaultPtrList &faultPtrListForGen, PatternProcessor *
 				if (xPathExists(pGateForActivation))
 				{
 					// TO-DO homework 05 implement DTC here end of TO-DO
-					if (generateSinglePatternOnTargetFault(mapSafToObservationFrame(pCircuit_, *pFault, useDeferredObservation_), true) == PATTERN_FOUND)
+					if (generateSinglePatternOnTargetFault(mapSafToObservationFrame(pCircuit_, *pFault), true) == PATTERN_FOUND)
 					{
 						resetPrevAtpgValStored();
 						clearAllFaultEffectByEvaluation();
@@ -1209,7 +1153,7 @@ void Atpg::StuckAtFaultATPG(FaultPtrList &faultPtrListForGen, PatternProcessor *
 // **************************************************************************
 Gate *Atpg::getGateForFaultActivation(const Fault &faultToActivate)
 {
-	const Fault mappedFault = mapSafToObservationFrame(pCircuit_, faultToActivate, useDeferredObservation_);
+	const Fault mappedFault = mapSafToObservationFrame(pCircuit_, faultToActivate);
 	bool isOutputFault = (faultToActivate.faultyLine_ == 0);
 	Gate *pGateForActivation = NULL;
 	Gate *pFaultyGate = &pCircuit_->circuitGates_[mappedFault.gateID_];
@@ -1278,7 +1222,8 @@ void Atpg::setGateAtpgValAndRunImplication(Gate &gate, const Value &val)
 				}
 				else
 				{
-					changed = false;
+					currGate.atpgVal_ = newValue;
+					changed = true;
 				}
 			}
 			else if (currGate.atpgVal_ != newValue)
@@ -1928,13 +1873,11 @@ Gate *Atpg::initializePiDirectActivation(const Fault &targetFault, int piGateId,
 	initializeObjectivesAndFrontiers();
 	initializeCircuitWithFaultyGate(*gPi, isAtStageDTC);
 
-	if ((targetFault.faultType_ == Fault::SA0 || targetFault.faultType_ == Fault::STR) &&
-			(useNineValuedLogic_ ? !atpgGoodEquals(gPi->atpgVal_, L) : gPi->atpgVal_ != L))
+	if ((targetFault.faultType_ == Fault::SA0 || targetFault.faultType_ == Fault::STR) && gPi->atpgVal_ != L)
 	{
 		gPi->atpgVal_ = D;
 	}
-	if ((targetFault.faultType_ == Fault::SA1 || targetFault.faultType_ == Fault::STF) &&
-			(useNineValuedLogic_ ? !atpgGoodEquals(gPi->atpgVal_, H) : gPi->atpgVal_ != H))
+	if ((targetFault.faultType_ == Fault::SA1 || targetFault.faultType_ == Fault::STF) && gPi->atpgVal_ != H)
 	{
 		gPi->atpgVal_ = B;
 	}
@@ -1979,13 +1922,11 @@ Gate *Atpg::initializeForSinglePatternGeneration(Fault &targetFault, int &backwa
 	// currentTargetHeadLineFault_.gateID_ = -1; //bug report
 	if (gateID_to_lineType_[gFaultyLine->gateId_] == FREE_LINE)
 	{
-		if ((targetFault.faultType_ == Fault::SA0 || targetFault.faultType_ == Fault::STR) &&
-				(useNineValuedLogic_ ? !atpgGoodEquals(gFaultyLine->atpgVal_, L) : gFaultyLine->atpgVal_ != L))
+		if ((targetFault.faultType_ == Fault::SA0 || targetFault.faultType_ == Fault::STR) && gFaultyLine->atpgVal_ != L)
 		{
 			gFaultyLine->atpgVal_ = D;
 		}
-		if ((targetFault.faultType_ == Fault::SA1 || targetFault.faultType_ == Fault::STF) &&
-				(useNineValuedLogic_ ? !atpgGoodEquals(gFaultyLine->atpgVal_, H) : gFaultyLine->atpgVal_ != H))
+		if ((targetFault.faultType_ == Fault::SA1 || targetFault.faultType_ == Fault::STF) && gFaultyLine->atpgVal_ != H)
 		{
 			gFaultyLine->atpgVal_ = B;
 		}
@@ -2916,11 +2857,7 @@ bool Atpg::continuationMeaningful(Gate *pLastDFrontier)
 	// determine the pLastDFrontier should be changed or not
 	if (pLastDFrontier != NULL)
 	{
-		const Value frontierValue = pLastDFrontier->atpgVal_;
-		const bool frontierStillOpen =
-			isDecisionNeeded(frontierValue) ||
-			(useNineValuedLogic_ && isPartlySpecifiedAtpgValue(frontierValue));
-		if (frontierStillOpen)
+		if (pLastDFrontier->atpgVal_ == X)
 		{
 			fDFrontierChanged = false;
 		}
@@ -3044,7 +2981,7 @@ bool Atpg::checkIfFaultHasPropagatedToPO(bool &faultHasPropagatedToPO)
 		const Gate &gate = pCircuit_->circuitGates_[gateID];
 		if (gate.gateType_ == Gate::PO)
 		{
-			if (hasAtpgFaultEffect(gate.atpgVal_))
+			if (isSensitiveValue(gate.atpgVal_))
 			{
 				faultHasPropagatedToPO = true;
 				return true;
@@ -3056,7 +2993,7 @@ bool Atpg::checkIfFaultHasPropagatedToPO(bool &faultHasPropagatedToPO)
 			{
 				continue;
 			}
-			if (hasAtpgFaultEffect(gate.atpgVal_))
+			if (isSensitiveValue(gate.atpgVal_))
 			{
 				faultHasPropagatedToPO = true;
 				return true;
@@ -3256,7 +3193,7 @@ bool Atpg::findFinalObjective(BACKTRACE_STATUS &backtraceFlag, const bool &fault
 				// TAKE OUT A HEAD OBJECTIVE
 				pGate = &pCircuit_->circuitGates_[vecPop(headLineObjectives_)];
 				// IS THE HEAD LINE UNSPECIFIED?
-				if (isDecisionNeeded(pGate->atpgVal_))
+				if (pGate->atpgVal_ == X)
 				{ // YES
 					if (pGate->gateType_ == Gate::TIEX || pGate->gateType_ == Gate::TIEZ)
 					{
@@ -4093,11 +4030,7 @@ int Atpg::setFaultyGate(Fault &fault)
 					{
 						// If the value has already been set, it should be
 						// non-control value, otherwise the fault can't propagate
-						if (!useNineValuedLogic_ ||
-								!atpgGoodEquals(pFaninGate->atpgVal_, pFaultyGate->getInputNonCtrlValue()))
-						{
-							return -1;
-						}
+						return -1;
 					}
 				}
 				else
@@ -4746,10 +4679,7 @@ Atpg::BACKTRACE_RESULT Atpg::multipleBacktrace(BACKTRACE_STATUS atpgStatus, int 
 
 						// ignore the fanin gate that already set value
 						// (not unknown)
-						const bool faninNeedsBacktrace =
-							isDecisionNeeded(pFaninGate->atpgVal_) ||
-							(useNineValuedLogic_ && isPartlySpecifiedAtpgValue(pFaninGate->atpgVal_));
-						if (!faninNeedsBacktrace)
+						if (pFaninGate->atpgVal_ != X)
 						{
 							continue;
 						}
@@ -4796,7 +4726,7 @@ Atpg::BACKTRACE_RESULT Atpg::multipleBacktrace(BACKTRACE_STATUS atpgStatus, int 
 							}
 							if (!mergeBacktraceRequirement(pFaninGate->gateId_, backtraceCountsToValue(nn0, nn1)))
 							{
-								possibleFinalObjectiveID = pFaninGate->gateId_;
+								possibleFinalObjectiveID = -1;
 								return CONTRADICTORY;
 							}
 							// first find this fanout point,  add to
@@ -4857,7 +4787,7 @@ Atpg::BACKTRACE_RESULT Atpg::multipleBacktrace(BACKTRACE_STATUS atpgStatus, int 
 								}
 								if (!mergeBacktraceRequirement(pFaninGate->gateId_, backtraceCountsToValue(nn0, nn1)))
 								{
-									possibleFinalObjectiveID = pFaninGate->gateId_;
+									possibleFinalObjectiveID = -1;
 									return CONTRADICTORY;
 								}
 								// add gate into Current Objective set
@@ -4891,10 +4821,7 @@ Atpg::BACKTRACE_RESULT Atpg::multipleBacktrace(BACKTRACE_STATUS atpgStatus, int 
 				// if value of pCurrent is not X
 				// ignore the Fanout-Point Objective that already set value
 				// (not unknown), back to CHECK_AND_SELECT state
-				const bool fanoutObjectiveResolved =
-					!isDecisionNeeded(pCurrentObj->atpgVal_) &&
-					!(useNineValuedLogic_ && isPartlySpecifiedAtpgValue(pCurrentObj->atpgVal_));
-				if (fanoutObjectiveResolved)
+				if (pCurrentObj->atpgVal_ != X)
 				{
 					atpgStatus = CHECK_AND_SELECT;
 					break; // switch break
@@ -6301,7 +6228,7 @@ void Atpg::testClearFaultEffect(FaultPtrList &faultListToTest)
 {
 	for (Fault *pFault : faultListToTest)
 	{
-		generateSinglePatternOnTargetFault(mapSafToObservationFrame(pCircuit_, *pFault, useDeferredObservation_), false);
+		generateSinglePatternOnTargetFault(mapSafToObservationFrame(pCircuit_, *pFault), false);
 		clearAllFaultEffectByEvaluation();
 
 		for (int i = 0; i < pCircuit_->totalGate_; ++i)
@@ -6421,7 +6348,7 @@ bool Atpg::justifyStateSequentiallyUnrolled(const std::map<int, Value>& required
 		int gateId = assign.first;
 		Value val = assign.second;
 		int drivingGateID = gateId - pCircuit_->numPI_ - pCircuit_->numPPI_;
-
+		
 		pCircuit_->circuitGates_[drivingGateID].atpgVal_ = val;
 		pushGateFanoutsToEventStack(drivingGateID);
 	}

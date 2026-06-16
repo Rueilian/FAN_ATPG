@@ -1476,6 +1476,12 @@ bool RunAtpgCmd::exec(const std::vector<std::string> &argv)
 	fanMgr_->atpg->setNumThreads(fanMgr_->atpgThreads_);
 	fanMgr_->atpg->useTwoPhaseJustification_ = fanMgr_->useTwoPhaseJustification_;
 	fanMgr_->atpg->useNineValuedLogic_ = fanMgr_->useNineValuedLogic_;
+	fanMgr_->atpg->useEnhancedBacktrace_ = fanMgr_->useEnhancedBacktrace_;
+	fanMgr_->atpg->useBackjump_ = fanMgr_->useBackjump_;
+	fanMgr_->atpg->useDominatorCheck_ = fanMgr_->useDominatorCheck_;
+	fanMgr_->atpg->useStaticLearning_ = fanMgr_->useStaticLearning_;
+	if (fanMgr_->useStaticLearning_)
+		fanMgr_->atpg->precomputeImplications();
 
 	std::cout << "#  Performing pattern generation ...";
 	std::cout << " (" << fanMgr_->atpg->numThreads() << " workers)";
