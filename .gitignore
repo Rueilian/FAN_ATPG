@@ -59,3 +59,8 @@ techlib/NangateOpenCellLibrary_typical.lib
 # Make dependency files
 *.d
 /results/*.sf
+# ATPG pattern outputs (keep pat/README.md)
+/pat/*.pat
+/pat/*.stil
+# include/ holds build-installed headers only; never a .cpp (stray dup)
+/include/*/*.cpp
