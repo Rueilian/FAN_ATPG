@@ -8,6 +8,9 @@ bin/opt/.nfs*
 *.a
 *.exe
 pkg/core/bin/
+# Compiled executables (fan + per-package test bins); keep bin/README.md
+/bin/opt/*
+/bin/dbg/*
 
 rpt/exp_*
 
@@ -26,6 +29,7 @@ techlib/NangateOpenCellLibrary_typical.lib
 /script/fanScripts/s*
 /script/fanScripts/tiny_*
 /script/fanScripts/debug*
+/script/fanScripts/diag_*
 /script/fanScripts/manual_*
 /script/fanScripts/test_*
 /script/fanScripts/issue32*
